@@ -82,9 +82,9 @@ PARAM$ganancia$error   <- -25000    # cualquier otro enviado
 PARAM$kaggle$cortes <- seq(8000, 12000, by = 500)
 
 # --- etapas del z635 que corren -------------------------------------------
-# En este experimento el FE se hace con la GENETICA, no con las hojas de random
-# forest (seccion 9.7.1.5 del z635): esa etapa queda apagada.
-PARAM$FE_rf$run <- FALSE
+# Todas las etapas del z635 corren como en el notebook. La genetica se agrega
+# despues del FE intra-mes; el FE de random forest (9.7.1.5) sigue prendido.
+PARAM$FE_rf$run <- TRUE
 
 # --- FE genetico (consigna del FE intra-mes) --------------------------------
 # Por ronda, gramEvol evoluciona formulas  v1 op v2  o  (v1 op v2) op v3
