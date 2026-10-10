@@ -90,7 +90,10 @@ PARAM$kaggle$cortes <- seq(8000, 12000, by = 500)
 PARAM$GA$rondas        <- 3     # cuantas variables geneticas buscar como maximo
 PARAM$GA$poblacion     <- 30    # formulas por generacion
 PARAM$GA$generaciones  <- 20    # generaciones por ronda
-PARAM$GA$mail_cada_gen <- 5     # mail de avance cada N generaciones
+PARAM$GA$mail_cada_gen <- 1     # mail de avance cada N generaciones
+PARAM$GA$horas_max     <- 24    # tope de horas de entrenamiento de la genetica (todas
+                                # las rondas, sumando sesiones); al llegar, cierra la
+                                # ronda con la mejor formula medida hasta ahi
 PARAM$GA$desvios       <- 2     # la mejora tiene que superar desvios * ruido
 PARAM$GA$proteger_de_canaritos <- FALSE   # TRUE: canaritos no puede borrar las gen_*
 PARAM$GA$undersampling <- 0.1   # fraccion de CONTINUA en el training del fitness
@@ -285,11 +288,20 @@ ga_registrar <- function(ronda, formula, ganancia, mejora, segundos) {
   GA$cache[[paste(ronda, formula)]] <- if (es_referencia(formula)) ganancia else mejora
 }
 
+# horas de entrenamiento ya gastadas en la genetica, sumando todas las sesiones
+ga_horas_usadas <- function() {
+  if (!file.exists(ARCH_GA_LOG)) return(0)
+  sum(fread(ARCH_GA_LOG, sep= "\t")$segundos, na.rm= TRUE) / 3600
+}
+
 # la funcion de costo de gramEvol (minimiza): -(mejora en ganancia)
 ga_costo <- function(expr) {
   formula <- as.character(expr)
   clave <- paste(GA$ronda, formula)
   if (!is.null(GA$cache[[clave]])) return(-GA$cache[[clave]])
+  if (GA$horas + GA$horas_sesion() >= PARAM$GA$horas_max)
+    stop(structure(class= c("ga_tope", "error", "condition"),
+      list(message= "tope de horas de la genetica", call= NULL)))
 
   # el entrenamiento no puede mover el RNG de R: si lo moviera, al retomar con
   # el cache gramEvol seguiria otro camino
@@ -318,6 +330,7 @@ ga_monitor <- function(resultado) {
   mandar_mail(sprintf("genetica ronda %d, generacion %d", GA$ronda, gen),
     paste0("Formulas evaluadas en la ronda: ", nrow(log_ga),
            sprintf(" (%.0f s promedio cada una)", mean(log_ga$segundos[log_ga$segundos > 0])), "\n",
+           sprintf("Horas usadas: %.1f de %g\n", GA$horas + GA$horas_sesion(), PARAM$GA$horas_max),
            "Ganancia base de la ronda: ", formatC(GA$base, format= "d", big.mark= "."),
            ", umbral para quedar: ", formatC(GA$umbral, format= "d", big.mark= "."), "\n\n",
            "Las 10 mejores hasta ahora:\n",
@@ -378,6 +391,11 @@ correr_genetica <- function() {
   PARAM$GA$ruido <<- ruido
   loguear("genetica: ruido entre semillas", round(ruido), "-> umbral", round(GA$umbral))
 
+  GA$horas <- ga_horas_usadas()
+  t_sesion <- Sys.time()
+  GA$horas_sesion <- function() as.numeric(difftime(Sys.time(), t_sesion, units= "hours"))
+  loguear("genetica: horas ya usadas", round(GA$horas, 1), "de", PARAM$GA$horas_max)
+
   hechas <- ga_rondas()
   for (r in seq_len(PARAM$GA$rondas)) {
     GA$ronda <- r
@@ -388,22 +406,41 @@ correr_genetica <- function() {
       loguear("genetica: ronda", r, "ya hecha:", fila$formula, if (fila$aceptada) "(queda)" else "(descartada)")
     } else {
       set.seed(PARAM$semilla_primigenia + r, kind = "L'Ecuyer-CMRG")
-      ge <- GrammaticalEvolution(gramatica, ga_costo,
-        optimizer= "ga", popSize= PARAM$GA$poblacion, iterations= PARAM$GA$generaciones,
-        monitorFunc= ga_monitor, disable.warnings= TRUE)
-      mejor <- as.character(ge$best$expressions)
-      mejora <- -ge$best$cost
+      corto <- FALSE
+      ge <- tryCatch(
+        GrammaticalEvolution(gramatica, ga_costo,
+          optimizer= "ga", popSize= PARAM$GA$poblacion, iterations= PARAM$GA$generaciones,
+          monitorFunc= ga_monitor, disable.warnings= TRUE),
+        ga_tope= function(e) { corto <<- TRUE; NULL })
+      if (corto) {
+        # se llego al tope: la mejor formula medida en la ronda
+        l <- fread(ARCH_GA_LOG, sep= "\t")[ronda == r & !es_referencia(formula)]
+        if (!nrow(l)) { loguear("genetica: tope de horas antes de medir formulas en la ronda", r); break }
+        mejor <- l[which.max(mejora), formula]
+        mejora <- max(l$mejora)
+        loguear("genetica: tope de", PARAM$GA$horas_max, "h alcanzado en la ronda", r)
+      } else {
+        mejor <- as.character(ge$best$expressions)
+        mejora <- -ge$best$cost
+      }
       fila <- data.table(ronda= r, nombre= sprintf("gen_%02d", r), formula= mejor,
         mejora= mejora, umbral= GA$umbral, aceptada= mejora > GA$umbral,
         evaluaciones= nrow(fread(ARCH_GA_LOG, sep= "\t")[ronda == r & !es_referencia(formula)]))
       fwrite(fila, ARCH_GA_RONDAS, sep= "\t", append= file.exists(ARCH_GA_RONDAS))
-      mandar_mail(sprintf("genetica ronda %d terminada", r), texto_ganadoras())
+      mandar_mail(sprintf("genetica ronda %d terminada%s", r, if (corto) " (tope de horas)" else ""),
+                  texto_ganadoras())
     }
 
-    if (!fila$aceptada) { loguear("genetica: la ronda", r, "no supero el ruido, corto"); break }
-    v <- ga_evaluar_formula(fila$formula, GA$datos)
-    GA$X <- cbind(GA$X, v)
-    colnames(GA$X)[ncol(GA$X)] <- fila$nombre
+    if (fila$aceptada) {
+      v <- ga_evaluar_formula(fila$formula, GA$datos)
+      GA$X <- cbind(GA$X, v)
+      colnames(GA$X)[ncol(GA$X)] <- fila$nombre
+    } else {
+      loguear("genetica: la ronda", r, "no supero el ruido, corto"); break
+    }
+    if (ga_horas_usadas() >= PARAM$GA$horas_max) {
+      loguear("genetica: tope de horas, no se abren mas rondas"); break
+    }
   }
 
   # las ganadoras entran al dataset completo

@@ -30,8 +30,11 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
   - Cada fórmula evaluada queda en `genetica_log.txt` (si la VM se corta,
     retoma sin volver a entrenar lo medido) y cada ronda en
     `genetica_rondas.txt`.
-  - Mail cada 5 generaciones con las 10 mejores fórmulas y al terminar cada
-    ronda. El mail final dice, por variable ganadora, la fórmula, la mejora,
+  - Mail en cada generación con las 10 mejores fórmulas, los segundos por
+    fórmula y las horas usadas, y al terminar cada ronda.
+  - **Tope de horas** (`PARAM$GA$horas_max`, 24 por defecto, sumando
+    sesiones): al llegar, cierra la ronda con la mejor fórmula medida hasta
+    ahí, que igual tiene que superar el ruido para quedar. El mail final dice, por variable ganadora, la fórmula, la mejora,
     si sobrevivió a canaritos y su puesto en la importancia del modelo final.
   - Los parámetros (`PARAM$GA$...`: rondas, población, generaciones, meses,
     LightGBM del fitness) están al principio del script.
@@ -128,7 +131,7 @@ Lo que más puede fallar o tardar:
 
 - **El costo de la genética no está medido.** Por ronda son hasta
   `poblacion × generaciones` = 600 entrenamientos de LightGBM (menos, porque
-  las fórmulas repetidas no se reentrenan). El mail de cada 5 generaciones
+  las fórmulas repetidas no se reentrenan). El mail de cada generación
   trae los segundos por fórmula: con eso se ajustan `PARAM$GA$poblacion` y
   `PARAM$GA$generaciones`.
 - **El uso de `gramEvol` sale de su documentación, no de una prueba:** que a
