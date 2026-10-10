@@ -482,7 +482,9 @@ preparar_kaggle <- function(avisar) {
   }
   if (!probar_kaggle()) {
     loguear("kaggle no responde: instalo el CLI con pip")
-    system2("python3", c("-m", "pip", "install", "--user", "--quiet", "kaggle"))
+    # la imagen tiene Python "externally managed" (PEP 668): sin este flag pip
+    # se niega. Con --user solo toca ~/.local, no el Python del sistema
+    system2("python3", c("-m", "pip", "install", "--user", "--quiet", "--break-system-packages", "kaggle"))
     if (kaggle_bin == "kaggle") kaggle_bin <<- path.expand("~/.local/bin/kaggle")
   }
   KAGGLE_OK <<- file.exists("~/.kaggle/kaggle.json") && probar_kaggle()
