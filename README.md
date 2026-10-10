@@ -23,6 +23,10 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
 - **Mail a una lista**: arranque, fin de cada etapa, cada N evaluaciones de la
   BO, error (con la etapa), fin, y si GCP expropia la VM. Un mail que falla no
   corta la corrida.
+- **Registro de la corrida**: el mail final (y `registro.txt` en la carpeta)
+  trae la versión del script (commit), grupo, línea de tiempo, semillas,
+  tamaño del dataset final, mejor AUC y los hiperparámetros del modelo final,
+  la duración de cada etapa, el `PARAM.yml` completo y la lista de archivos.
 - **Checkpoints en el bucket**, para que una expropiación no pierda trabajo:
 
   | Qué | Archivo (en `exp/WF<experimento>/`) |
@@ -60,13 +64,22 @@ cp .env.example .env.B             # GRUPO=B, otro EXPERIMENTO
 vm/lanzar.sh A
 ```
 
-`lanzar.sh` chequea la cuota de vCPUs, sube el script y el `.env` a
-`gs://<bucket>/wf635/<grupo>/`, y crea la VM desde el template. La VM corre
-el workflow y, con `AUTO_DELETE=1`, se borra sola 30 minutos después de
-terminar (bien o con error).
+`lanzar.sh`:
 
-**Si GCP la expropia**, llega un mail. Se relanza con el mismo
-`vm/lanzar.sh A` y retoma desde el último checkpoint.
+1. chequea la cuota de vCPUs;
+2. sube el script y el `.env` a `gs://<bucket>/wf635/<grupo>/`;
+3. crea un template propio, copia del de la cátedra (misma máquina, disco,
+   imagen, Spot) con `vm/startup.sh` y `vm/shutdown.sh`;
+4. crea un **grupo administrado de una VM** (`wf635-a` / `wf635-b`).
+
+**Si GCP expropia la VM**, llega un mail y el grupo crea otra sola, que
+retoma desde el último checkpoint. No hay que hacer nada.
+
+**Al terminar, o si R falla**, la VM espera 30 minutos y baja el grupo a 0,
+así no se recrea (con `APAGAR_AL_TERMINAR=1`). Si R muere sin poder avisar
+(por ejemplo, sin memoria), el startup manda el mail.
+
+Para pararlo a mano: `vm/parar.sh A`. Para seguir después: `vm/lanzar.sh A`.
 
 Log en vivo:
 
@@ -79,7 +92,8 @@ gsutil cat gs://<bucket>/wf635/A/log.txt | tail -50
 Los templates de la cátedra están en el proyecto
 (`gcloud compute instance-templates list`): Spot, n2 custom, de 128 a 512 GB,
 con 8 o 12 vCPU, imagen `labo-family`. **Al expropiarse, la VM se borra**
-(`instanceTerminationAction: DELETE`), por eso todo se guarda en el bucket.
+(`instanceTerminationAction: DELETE`): por eso todo se guarda en el bucket y
+el grupo administrado la recrea.
 
 La cuota global de este proyecto es de **12 vCPUs**: dos VM de
 `to-128ram-08vcpu` (8 + 8) no entran a la vez. `lanzar.sh` lo chequea antes

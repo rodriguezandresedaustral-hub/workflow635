@@ -136,6 +136,9 @@ mandar_mail <- function(titulo, cuerpo) {
 ETAPA <- "inicio"
 T_ETAPA <- Sys.time()
 T_INICIO <- Sys.time()
+# duracion de cada etapa en esta sesion, para el registro final
+TIEMPOS <- data.table(etapa= character(), minutos= numeric())
+WF_VERSION <- Sys.getenv("WF_VERSION", "sin version (no se lanzo con vm/lanzar.sh)")
 
 etapa <- function(nombre) {
   ETAPA <<- nombre
@@ -146,6 +149,7 @@ etapa <- function(nombre) {
 fin_etapa <- function(detalle= "") {
   mins <- as.numeric(difftime(Sys.time(), T_ETAPA, units= "mins"))
   loguear("=== fin etapa", ETAPA, sprintf("(%.1f min)", mins))
+  TIEMPOS <<- rbind(TIEMPOS, data.table(etapa= ETAPA, minutos= round(mins, 1)))
   mandar_mail(paste("termino", ETAPA),
     paste0("Etapa ", ETAPA, " terminada en ", sprintf("%.1f", mins), " min.\n",
            if (exists("dataset")) paste0("dataset: ", nrow(dataset), " filas x ", ncol(dataset), " columnas\n") else "",
@@ -179,6 +183,7 @@ CK_CANARITOS <- "checkpoints/dataset_canaritos.fst"
 
 mandar_mail("arranco",
   paste0("Experimento ", PARAM$experimento, ", grupo ", GRUPO, "\n",
+         "Version del script: ", WF_VERSION, "\n",
          "Carpeta: ", carpeta_exp, "\n",
          "Semillas: ", paste(PARAM$FT$semillas, collapse= ", "), "\n",
          "Checkpoints existentes: ",
@@ -1961,9 +1966,37 @@ require("yaml")
 write_yaml( PARAM, file="PARAM.yml")
 
 
-writeLines(format(Sys.time()), "TERMINADO")
+# REGISTRO de la corrida: lo mismo va al mail final y a registro.txt
 horas <- as.numeric(difftime(Sys.time(), T_INICIO, units= "hours"))
-mandar_mail("TERMINO",
-  paste0("Corrida completa en ", sprintf("%.1f", horas), " h (esta sesion).\n\n",
-         "Mejor AUC de la BO: ", round(tb_bayesiana[1, y], 6), "\n\n", resumen))
+texto <- function(x) paste(capture.output(print(x)), collapse= "\n")
+seccion <- function(titulo, cuerpo) paste0("\n=== ", titulo, " ===\n", cuerpo, "\n")
+
+registro <- paste0(
+  "Experimento ", PARAM$experimento, ", grupo ", GRUPO, "\n",
+  "Version del script: ", WF_VERSION, "\n",
+  "Carpeta: ", carpeta_exp, "\n",
+  "Terminado: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+  sprintf(" (esta sesion: %.1f h)", horas), "\n",
+  seccion("Resultado", resumen),
+  seccion("Linea de tiempo", paste0(
+    "training ", min(PARAM$trainingstrategy$training), "-", max(PARAM$trainingstrategy$training),
+    ", validate ", paste(PARAM$trainingstrategy$validate, collapse= " "),
+    ", final_train ", min(PARAM$trainingstrategy$final_train), "-", max(PARAM$trainingstrategy$final_train),
+    ", future ", paste(PARAM$trainingstrategy$future, collapse= " "))),
+  seccion("Semillas", paste0("primigenia ", PARAM$semilla_primigenia,
+    ", semillerio ", paste(PARAM$FT$semillas, collapse= ", "))),
+  seccion("Dataset final", paste0(nrow(dataset), " filas x ", ncol(dataset),
+    " columnas; entrena con ", length(campos_buenos), " campos")),
+  seccion("Optimizacion bayesiana", paste0("mejor AUC ", round(tb_bayesiana[1, y], 6),
+    " de ", nrow(tb_bayesiana), " evaluaciones\n",
+    "hiperparametros del modelo final:\n", texto(param_final))),
+  seccion("Duracion de cada etapa (esta sesion)", texto(TIEMPOS)),
+  seccion("PARAM completo (PARAM.yml)",
+    if (file.exists("PARAM.yml")) paste(readLines("PARAM.yml"), collapse= "\n") else "no se grabo PARAM.yml"),
+  seccion("Archivos en la carpeta", paste(list.files(".", recursive= TRUE), collapse= "\n"))
+)
+writeLines(registro, "registro.txt")
+
+writeLines(format(Sys.time()), "TERMINADO")
+mandar_mail("TERMINO", registro)
 format(Sys.time(), "%a %b %d %X %Y")
