@@ -463,13 +463,13 @@ correr_genetica <- function() {
 # GRUPO A: Kaggle se prepara y se prueba al arrancar. Si no anda, avisa por
 # mail ahora; la corrida sigue y los archivos para subir quedan en ./kaggle
 KAGGLE_OK <- FALSE
-if (GRUPO == "A") {
+preparar_kaggle <- function(avisar) {
   dir.create("~/.kaggle", showWarnings= FALSE)
   if (!file.exists("~/.kaggle/kaggle.json") && file.exists(Sys.getenv("KAGGLE_JSON"))) {
     file.copy(Sys.getenv("KAGGLE_JSON"), "~/.kaggle/kaggle.json")
     Sys.chmod("~/.kaggle/kaggle.json", "600")
   }
-  kaggle_bin <- Sys.getenv("KAGGLE_BIN", "kaggle")
+  kaggle_bin <<- Sys.getenv("KAGGLE_BIN", "kaggle")
   probar_kaggle <- function() {
     out <- suppressWarnings(tryCatch(system2(kaggle_bin, "--version", stdout= TRUE, stderr= TRUE),
       error= function(e) structure("no se pudo ejecutar", status= 127L)))
@@ -478,14 +478,15 @@ if (GRUPO == "A") {
   if (!probar_kaggle()) {
     loguear("kaggle no responde: instalo el CLI con pip")
     system2("python3", c("-m", "pip", "install", "--user", "--quiet", "kaggle"))
-    if (kaggle_bin == "kaggle") kaggle_bin <- path.expand("~/.local/bin/kaggle")
+    if (kaggle_bin == "kaggle") kaggle_bin <<- path.expand("~/.local/bin/kaggle")
   }
-  KAGGLE_OK <- file.exists("~/.kaggle/kaggle.json") && probar_kaggle()
-  if (!KAGGLE_OK) mandar_mail("AVISO: Kaggle no funciona",
+  KAGGLE_OK <<- file.exists("~/.kaggle/kaggle.json") && probar_kaggle()
+  if (!KAGGLE_OK && avisar) mandar_mail("AVISO: Kaggle no funciona",
     paste0("No hay ~/.kaggle/kaggle.json (KAGGLE_JSON=", Sys.getenv("KAGGLE_JSON"),
            ") o el CLI no responde. La corrida sigue; al final los archivos quedan en ",
            carpeta_exp, "/kaggle y no se suben."))
 }
+if (GRUPO == "A") preparar_kaggle(avisar= TRUE)
 
 CK_HIST <- "checkpoints/dataset_fe_historico.fst"
 CK_CANARITOS <- "checkpoints/dataset_canaritos.fst"
@@ -2211,7 +2212,9 @@ resumen <- ""
 
 if (GRUPO == "A") {
   etapa("kaggle")
-  # kaggle.json y el CLI se prepararon al arrancar (KAGGLE_OK)
+  # kaggle.json y el CLI se prepararon al arrancar; si no andaban, se reintenta
+  # (el kaggle.json pudo haberse subido al bucket durante la corrida)
+  if (!KAGGLE_OK) preparar_kaggle(avisar= FALSE)
   PARAM$kaggle$competencia <- Sys.getenv("KAGGLE_COMPETENCIA")
 
   setorder(tb_prediccion, -prob)
