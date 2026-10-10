@@ -57,6 +57,8 @@ fi
 # --- subir script y .env (sin CRLF: Windows los rompe para bash y R) -------
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
+# gcloud en Windows no entiende las rutas /tmp de Git Bash
+TMP_GC=$(cygpath -m "$TMP" 2>/dev/null || echo "$TMP")
 for f in 635_workflow_senior.R "$ENVF" vm/startup.sh vm/shutdown.sh; do
   tr -d '\r' < "$f" > "$TMP/$(basename "$f")"
 done
@@ -95,7 +97,7 @@ else
     --service-account "$CUENTA" --scopes cloud-platform \
     --tags "$TAGS" \
     --shielded-secure-boot --shielded-vtpm --shielded-integrity-monitoring \
-    --metadata-from-file startup-script="$TMP/startup.sh",shutdown-script="$TMP/shutdown.sh" \
+    --metadata-from-file startup-script="$TMP_GC/startup.sh",shutdown-script="$TMP_GC/shutdown.sh" \
     --metadata "$METADATA"
 fi
 URL_PROPIO="projects/$PROJECT/regions/$REGION/instanceTemplates/$PROPIO"
