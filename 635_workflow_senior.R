@@ -91,9 +91,10 @@ PARAM$GA$rondas        <- 3     # cuantas variables geneticas buscar como maximo
 PARAM$GA$poblacion     <- 30    # formulas por generacion
 PARAM$GA$generaciones  <- 20    # generaciones por ronda
 PARAM$GA$mail_cada_gen <- 1     # mail de avance cada N generaciones
-PARAM$GA$horas_max     <- 24    # tope de horas de entrenamiento de la genetica (todas
-                                # las rondas, sumando sesiones); al llegar, cierra la
-                                # ronda con la mejor formula medida hasta ahi
+PARAM$GA$horas_max     <- Inf   # sin tope: la genetica corre todas sus rondas y
+                                # generaciones. Con un numero, al llegar a esas horas
+                                # cierra la ronda con la mejor formula medida y sigue
+                                # sola con el resto del workflow
 PARAM$GA$desvios       <- 2     # la mejora tiene que superar desvios * ruido
 PARAM$GA$proteger_de_canaritos <- FALSE   # TRUE: canaritos no puede borrar las gen_*
 PARAM$GA$undersampling <- 0.1   # fraccion de CONTINUA en el training del fitness

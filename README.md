@@ -32,9 +32,9 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
     `genetica_rondas.txt`.
   - Mail en cada generación con las 10 mejores fórmulas, los segundos por
     fórmula y las horas usadas, y al terminar cada ronda.
-  - **Tope de horas** (`PARAM$GA$horas_max`, 24 por defecto, sumando
-    sesiones): al llegar, cierra la ronda con la mejor fórmula medida hasta
-    ahí, que igual tiene que superar el ruido para quedar. El mail final dice, por variable ganadora, la fórmula, la mejora,
+  - **Tope de horas opcional** (`PARAM$GA$horas_max`, apagado por defecto):
+    con un número, al llegar cierra la ronda con la mejor fórmula medida y
+    sigue sola con el resto del workflow. El mail final dice, por variable ganadora, la fórmula, la mejora,
     si sobrevivió a canaritos y su puesto en la importancia del modelo final.
   - Los parámetros (`PARAM$GA$...`: rondas, población, generaciones, meses,
     LightGBM del fitness) están al principio del script.
