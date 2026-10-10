@@ -90,8 +90,9 @@ PARAM$FE_rf$run <- TRUE
 # Por ronda, gramEvol evoluciona formulas  v1 op v2  o  (v1 op v2) op v3
 # sobre los campos del mes. Fitness: cuanta ganancia agrega la formula a un
 # LightGBM fijo, medida en el mes de validacion del grupo (nunca el de testing).
-# La mejor de la ronda se queda solo si mejora mas que 2 desvios del ruido entre
-# semillas; si no, se corta. Cada ganadora entra como columna gen_<ronda>.
+# Corren TODAS las rondas. La mejor de cada ronda entra como columna gen_<ronda>
+# solo si mejora mas que 2 desvios del ruido entre semillas; si no, se descarta
+# y la ronda siguiente busca de nuevo con otra semilla.
 PARAM$GA$rondas        <- 3     # cuantas variables geneticas buscar como maximo
 PARAM$GA$poblacion     <- 30    # formulas por generacion
 PARAM$GA$generaciones  <- 20    # generaciones por ronda
@@ -102,8 +103,12 @@ PARAM$GA$horas_max     <- Inf   # sin tope: la genetica corre todas sus rondas y
                                 # sola con el resto del workflow
 PARAM$GA$desvios       <- 2     # la mejora tiene que superar desvios * ruido
 PARAM$GA$proteger_de_canaritos <- FALSE   # TRUE: canaritos no puede borrar las gen_*
-PARAM$GA$undersampling <- 0.1   # fraccion de CONTINUA en el training del fitness
-PARAM$GA$entrena <- if (GRUPO == "A") c(202101, 202102, 202103, 202104, 202105) else c(202101, 202102, 202103)
+# meses del fitness: los mismos de la training strategy del z635 (celda 74),
+# todo hasta 202105 con el 20% de los CONTINUA, y se mide en 202107 (grupo A).
+# 202109 es el testing (Kaggle) y la genetica nunca lo ve.
+PARAM$GA$undersampling <- 0.2   # = PARAM$trainingstrategy$training_pct del z635
+PARAM$GA$entrena <- if (GRUPO == "A") c(201901:201912, 202001:202012, 202101:202105) else
+                                      c(201901:201912, 202001:202012, 202101:202103)
 PARAM$GA$valida  <- if (GRUPO == "A") c(202107) else c(202105)
 PARAM$GA$semillas_ruido <- PARAM$FT$semillas[1:3]
 PARAM$GA$lgb_param <- list(
@@ -445,7 +450,7 @@ correr_genetica <- function() {
       GA$X <- cbind(GA$X, v)
       colnames(GA$X)[ncol(GA$X)] <- fila$nombre
     } else {
-      loguear("genetica: la ronda", r, "no supero el ruido, corto"); break
+      loguear("genetica: la ronda", r, "no supero el ruido: se descarta y sigue la ronda", r + 1)
     }
     if (ga_horas_usadas() >= PARAM$GA$horas_max) {
       loguear("genetica: tope de horas, no se abren mas rondas"); break
