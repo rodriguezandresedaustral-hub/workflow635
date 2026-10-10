@@ -14,6 +14,10 @@
 #   3. crea el grupo, o lo vuelve a 1 si existia en 0
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Git Bash convierte en rutas de Windows los argumentos con /: el metadata
+# bucket-dir=/home/ds/... le llegaba a la VM como C:/Program Files/Git/home/ds/...
+# Se excluye solo ese argumento (apagar la conversion entera rompe a gcloud)
+export MSYS2_ARG_CONV_EXCL="wf-dir="
 
 G=$(echo "${1:?uso: vm/lanzar.sh A|B}" | tr '[:lower:]' '[:upper:]')
 [ "$G" = "A" ] || [ "$G" = "B" ] || { echo "el grupo es A o B"; exit 1; }

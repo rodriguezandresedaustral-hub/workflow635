@@ -21,8 +21,11 @@ DIR="$B/$(meta attributes/wf-dir)"
 
 for i in $(seq 120); do [ -f "$DIR/.env" ] && break; sleep 5; done
 if [ ! -f "$DIR/.env" ]; then
-  echo "startup: no veo $DIR/.env despues de 10 min: el bucket no esta montado"
-  exit 1      # el grupo queda en 1 y la VM prendida: hay que mirar a mano
+  # sin .env no hay mail: queda en el serial port. Se baja el grupo para no
+  # dejar la VM prendida cobrando
+  echo "startup: no veo $DIR/.env despues de 10 min: el bucket no esta montado. Bajo el grupo a 0"
+  gcloud compute instance-groups managed resize "$MIG" --zone "$ZONA" --project "$PROYECTO" --size 0
+  exit 1
 fi
 
 set -a; . "$DIR/.env"; set +a
