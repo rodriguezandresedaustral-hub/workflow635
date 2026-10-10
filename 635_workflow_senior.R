@@ -81,6 +81,11 @@ PARAM$ganancia$acierto <- 975000    # BAJA+2 enviado
 PARAM$ganancia$error   <- -25000    # cualquier otro enviado
 PARAM$kaggle$cortes <- seq(8000, 12000, by = 500)
 
+# --- etapas del z635 que corren -------------------------------------------
+# En este experimento el FE se hace con la GENETICA, no con las hojas de random
+# forest (seccion 9.7.1.5 del z635): esa etapa queda apagada.
+PARAM$FE_rf$run <- FALSE
+
 # --- FE genetico (consigna del FE intra-mes) --------------------------------
 # Por ronda, gramEvol evoluciona formulas  v1 op v2  o  (v1 op v2) op v3
 # sobre los campos del mes. Fitness: cuanta ganancia agrega la formula a un
@@ -1426,7 +1431,8 @@ if( PARAM$FE_hist$Tendencias$run) {
     dataset <- leer_checkpoint(CK_HIST)
   }
 
-  etapa("FE random forest")
+  if (PARAM$FE_rf$run) {
+    etapa("FE random forest")
 # --- z635 celda 57 ---
 if( !require("lightgbm")) install.packages("lightgbm")
 require("lightgbm")
@@ -1569,7 +1575,10 @@ PARAM$FE_rf$lgb_param <-list(
 # Feature Engineering agregando variables de Random Forest
 AgregaVarRandomForest()
 
-  fin_etapa()
+    fin_etapa()
+  } else {
+    loguear("FE random forest apagado (PARAM$FE_rf$run = FALSE)")
+  }
 
   etapa("canaritos")
 # --- z635 celda 65 ---
