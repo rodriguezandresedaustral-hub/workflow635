@@ -62,7 +62,16 @@ if (!file.exists(Sys.getenv("DATASET_PATH"))) stop("No existe DATASET_PATH: ", S
 
 PARAM <- list()
 PARAM$semilla_primigenia <- 100213
+# una corrida completa por semilla: vm/startup.sh pasa cada semilla de
+# SEMILLAS_PIPELINE como segundo argumento, y esa semilla es la primigenia de
+# todo el pipeline (genetica, canaritos, undersampling, BO). El modelo final
+# usa igual las 9 del semillerio.
+SEMILLA_CORRIDA <- if (length(args) >= 2) as.numeric(args[2]) else NA
+if (!is.na(SEMILLA_CORRIDA)) PARAM$semilla_primigenia <- SEMILLA_CORRIDA
 PARAM$experimento <- as.integer(Sys.getenv("EXPERIMENTO"))
+# nombre de la corrida: WF<experimento>, o WF<experimento>_s<semilla> en la serie por semilla
+NOMBRE_CORRIDA <- paste0("WF", PARAM$experimento,
+  if (!is.na(SEMILLA_CORRIDA)) paste0("_s", format(SEMILLA_CORRIDA, scientific= FALSE)) else "")
 PARAM$grupo <- GRUPO
 PARAM$dataset <- basename(Sys.getenv("DATASET_PATH"))
 
@@ -132,7 +141,7 @@ PARAM$GA$lgb_param <- list(
 # ---------------------------------------------------------------------------
 # CARPETA DEL EXPERIMENTO (en el bucket: todo lo que se graba sobrevive)
 # ---------------------------------------------------------------------------
-carpeta_exp <- file.path(Sys.getenv("BUCKET_DIR"), "exp", paste0("WF", PARAM$experimento))
+carpeta_exp <- file.path(Sys.getenv("BUCKET_DIR"), "exp", NOMBRE_CORRIDA)
 dir.create(carpeta_exp, recursive= TRUE, showWarnings= FALSE)
 setwd(carpeta_exp)
 dir.create("checkpoints", showWarnings= FALSE)
@@ -157,7 +166,7 @@ destinatarios <- function() {
 # Message-ID del primero es fijo; la marca .mail_hilo_<hilo> dice si ya salio.
 # (Sin sample(): el RNG no se puede tocar durante la genetica.)
 MAIL_N <- 0L
-id_hilo <- function(hilo) sprintf("<wf%d-%s-%s@workflow635>", PARAM$experimento, tolower(GRUPO), hilo)
+id_hilo <- function(hilo) sprintf("<%s-%s-%s@workflow635>", tolower(NOMBRE_CORRIDA), tolower(GRUPO), hilo)
 
 mandar_mail <- function(titulo, cuerpo, hilo= "experimento") {
   tryCatch({
@@ -166,13 +175,13 @@ mandar_mail <- function(titulo, cuerpo, hilo= "experimento") {
     if (!length(para)) { loguear("SIN MAIL: no hay destinatarios en", Sys.getenv("MAIL_TO_FILE")); return(invisible(FALSE)) }
     if (!file.exists(pass_file)) { loguear("SIN MAIL: no existe", pass_file); return(invisible(FALSE)) }
     pass <- trimws(readLines(pass_file, warn= FALSE)[1])
-    asunto <- sprintf("[WF%d grupo %s] %s", PARAM$experimento, GRUPO, hilo)
+    asunto <- sprintf("[%s grupo %s] %s", NOMBRE_CORRIDA, GRUPO, hilo)
     raiz <- id_hilo(hilo)
     marca <- paste0(".mail_hilo_", hilo)
     es_primero <- !file.exists(marca)
     MAIL_N <<- MAIL_N + 1L
-    msg_id <- if (es_primero) raiz else sprintf("<wf%d-%s-%s-%s-%d@workflow635>",
-      PARAM$experimento, tolower(GRUPO), hilo, format(Sys.time(), "%Y%m%d%H%M%OS6"), MAIL_N)
+    msg_id <- if (es_primero) raiz else sprintf("<%s-%s-%s-%s-%d@workflow635>",
+      tolower(NOMBRE_CORRIDA), tolower(GRUPO), hilo, format(Sys.time(), "%Y%m%d%H%M%OS6"), MAIL_N)
 
     archivo <- tempfile(fileext= ".txt")
     writeLines(c(
@@ -523,7 +532,7 @@ CK_HIST <- "checkpoints/dataset_fe_historico.fst"
 CK_CANARITOS <- "checkpoints/dataset_canaritos.fst"
 
 mandar_mail("arranco",
-  paste0("Experimento ", PARAM$experimento, ", grupo ", GRUPO, "\n",
+  paste0("Corrida ", NOMBRE_CORRIDA, ", grupo ", GRUPO, ", semilla del pipeline ", PARAM$semilla_primigenia, "\n",
          "Version del script: ", WF_VERSION, "\n",
          "Carpeta: ", carpeta_exp, "\n",
          "Semillas: ", paste(PARAM$FT$semillas, collapse= ", "), "\n",
@@ -2260,7 +2269,7 @@ if (GRUPO == "A") {
     tb_prediccion[, Predicted := 0L]
     tb_prediccion[1:envios, Predicted := 1L]
 
-    archivo_kaggle <- paste0("./kaggle/KA", PARAM$experimento, "_",
+    archivo_kaggle <- paste0("./kaggle/KA", sub("^WF", "", NOMBRE_CORRIDA), "_",
       "s", length(PARAM$FT$semillas), "_", envios, ".csv")
     marca <- paste0(archivo_kaggle, ".subido")
     if (file.exists(marca)) { loguear("ya subido:", archivo_kaggle); next }
@@ -2284,6 +2293,27 @@ if (GRUPO == "A") {
   }
   resumen <- paste0("Subidos a Kaggle en esta corrida: ",
     if (length(subidos)) paste(subidos, collapse= ", ") else "ninguno nuevo")
+
+  # puntaje publico de lo subido: Kaggle tarda un poco en calcularlo
+  if (KAGGLE_OK) {
+    nuestros <- basename(list.files("kaggle", pattern= "[.]csv$"))
+    for (intento in 1:6) {
+      Sys.sleep(60)
+      tb_sub <- tryCatch(fread(text= paste(suppressWarnings(system2(kaggle_bin,
+          c("competitions", "submissions", "-c", PARAM$kaggle$competencia, "--csv"),
+          stdout= TRUE, stderr= FALSE)), collapse= "\n")), error= function(e) NULL)
+      if (is.null(tb_sub) || !("fileName" %in% names(tb_sub))) next
+      tb_sub <- tb_sub[fileName %in% nuestros]
+      if (nrow(tb_sub) && all(nchar(as.character(tb_sub$publicScore)) > 0)) break
+    }
+    if (!is.null(tb_sub) && "fileName" %in% names(tb_sub) && nrow(tb_sub)) {
+      fwrite(tb_sub, "kaggle_puntajes.txt", sep= "\t")
+      resumen <- paste0(resumen, "\n\nPuntaje publico en Kaggle:\n",
+        paste(sprintf("  %-28s %s", tb_sub$fileName, tb_sub$publicScore), collapse= "\n"))
+    } else {
+      resumen <- paste0(resumen, "\n\n(no se pudo leer el puntaje de Kaggle; ver la pagina de submissions)")
+    }
+  }
   fin_etapa(resumen)
 
 } else {
@@ -2349,7 +2379,7 @@ texto <- function(x) paste(capture.output(print(x)), collapse= "\n")
 seccion <- function(titulo, cuerpo) paste0("\n=== ", titulo, " ===\n", cuerpo, "\n")
 
 registro <- paste0(
-  "Experimento ", PARAM$experimento, ", grupo ", GRUPO, "\n",
+  "Corrida ", NOMBRE_CORRIDA, ", grupo ", GRUPO, ", semilla del pipeline ", PARAM$semilla_primigenia, "\n",
   "Version del script: ", WF_VERSION, "\n",
   "Carpeta: ", carpeta_exp, "\n",
   "Terminado: ", format(Sys.time(), "%Y-%m-%d %H:%M:%S"),

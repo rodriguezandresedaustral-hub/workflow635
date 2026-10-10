@@ -33,47 +33,61 @@ if ! ds test -f "$DIR/.env"; then
 fi
 
 set -a; . <(ds cat "$DIR/.env" | tr -d '\r'); set +a
-FIN="$B/exp/WF$EXPERIMENTO/TERMINADO"
 
-mail() {   # mail <titulo> <cuerpo>
+# SEMILLAS_PIPELINE (en el .env, separadas por coma): una corrida completa por
+# semilla, en orden, cada una en exp/WF<EXPERIMENTO>_s<semilla>. Vacio = una
+# sola corrida en exp/WF<EXPERIMENTO> con la semilla del script.
+SEMILLAS=$(echo "${SEMILLAS_PIPELINE:-}" | tr ',' ' ')
+[ -z "$SEMILLAS" ] && SEMILLAS="-"
+
+nombre() { if [ "$1" = "-" ]; then echo "WF$EXPERIMENTO"; else echo "WF${EXPERIMENTO}_s$1"; fi; }
+
+mail() {   # mail <corrida> <titulo> <cuerpo>: al hilo "experimento" de esa corrida
   ds test -f "$MAIL_PASS_FILE" && ds test -f "$MAIL_TO_FILE" || return 0
   local para rcpt="" m
   para=$(ds cat "$MAIL_TO_FILE" | grep -v '^#' | sed '/^[[:space:]]*$/d')
   for d in $para; do rcpt="$rcpt --mail-rcpt $d"; done
   m=$(mktemp)
-  # va al hilo "experimento" de Gmail, el mismo que usa el script de R
-  local raiz="<wf$EXPERIMENTO-$(echo $GRUPO | tr A-Z a-z)-experimento@workflow635>"
-  printf "From: %s\nTo: %s\nSubject: Re: [WF%s grupo %s] experimento\nIn-Reply-To: %s\nReferences: %s\n\n%s\n\n%s\n" \
-    "$MAIL_FROM" "$(echo $para | sed 's/ /, /g')" "$EXPERIMENTO" "$GRUPO" "$raiz" "$raiz" "$1" "$2" > "$m"
+  local raiz="<$(echo $1 | tr A-Z a-z)-$(echo $GRUPO | tr A-Z a-z)-experimento@workflow635>"
+  printf "From: %s\nTo: %s\nSubject: Re: [%s grupo %s] experimento\nIn-Reply-To: %s\nReferences: %s\n\n%s\n\n%s\n" \
+    "$MAIL_FROM" "$(echo $para | sed 's/ /, /g')" "$1" "$GRUPO" "$raiz" "$raiz" "$2" "$3" > "$m"
   curl -s --max-time 30 --ssl-reqd --url smtps://smtp.gmail.com:465 \
     --mail-from "$MAIL_FROM" $rcpt \
     --user "$MAIL_FROM:$(ds head -1 "$MAIL_PASS_FILE" | tr -d '[:space:]')" -T "$m"
   rm -f "$m"
 }
 
-if ! ds test -f "$FIN"; then
+for SEM in $SEMILLAS; do
+  CORRIDA=$(nombre "$SEM")
+  FIN="$B/exp/$CORRIDA/TERMINADO"
+  ds test -f "$FIN" && continue
+  echo "$CORRIDA" > /home/ds/wf635_corrida_actual    # para el mail del shutdown
+  ARG=""; [ "$SEM" != "-" ] && ARG="$SEM"
+
   # gcsfuse sube un archivo recien al cerrarlo: R escribe el log en el disco
-  # local y una copia va al bucket cada minuto (log.txt), para verlo en vivo
+  # local y una copia va al bucket cada minuto (log_<corrida>.txt)
   ds bash -lc "
     export PATH=\$HOME/.local/bin:\$PATH
-    LOCAL=\$HOME/wf635_log.txt
+    LOCAL=\$HOME/log_$CORRIDA.txt
     cd '$DIR' || exit 2
-    [ -f log.txt ] && [ ! -f \$LOCAL ] && cp log.txt \$LOCAL
-    ( while sleep 60; do cp \$LOCAL log.txt; done ) &
+    [ -f log_$CORRIDA.txt ] && [ ! -f \$LOCAL ] && cp log_$CORRIDA.txt \$LOCAL
+    ( while sleep 60; do cp \$LOCAL log_$CORRIDA.txt; done ) &
     COPIA=\$!
-    Rscript 635_workflow_senior.R .env >> \$LOCAL 2>&1
+    Rscript 635_workflow_senior.R .env $ARG >> \$LOCAL 2>&1
     RC=\$?
     kill \$COPIA
-    cp \$LOCAL log.txt
+    cp \$LOCAL log_$CORRIDA.txt
     exit \$RC"
   RC=$?
-  # rc 1 = error que R ya aviso por mail. Otro rc sin TERMINADO = R murio sin
-  # poder avisar (por ejemplo, sin memoria): aviso aca.
-  if ! ds test -f "$FIN" && [ "$RC" != "1" ]; then
-    mail "R termino sin terminar (codigo $RC)" \
-      "Rscript salio con codigo $RC y sin TERMINADO. Probable falta de memoria. Ver $DIR/log.txt. La VM se apaga en 30 min y no se recrea."
+  if ! ds test -f "$FIN"; then
+    # rc 1 = error que R ya aviso por mail. Otro rc = R murio sin poder avisar
+    # (por ejemplo, sin memoria). En los dos casos se corta la serie: un error
+    # en una semilla casi seguro se repite en la siguiente.
+    [ "$RC" != "1" ] && mail "$CORRIDA" "R termino sin terminar (codigo $RC)" \
+      "Rscript salio con codigo $RC y sin TERMINADO. Probable falta de memoria. Ver $DIR/log_$CORRIDA.txt. Se corta la serie; la VM se apaga en 30 min."
+    break
   fi
-fi
+done
 
 if [ "$(meta attributes/apagar-al-terminar)" = "1" ]; then
   sleep 1800
