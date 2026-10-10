@@ -114,27 +114,56 @@ gsutil cat gs://<bucket>/wf635/A/log.txt | tail -50
 
 Los templates de la cátedra están en el proyecto
 (`gcloud compute instance-templates list`): Spot, n2 custom, de 128 a 512 GB,
-con 8 o 12 vCPU, imagen `labo-family`. **Al expropiarse, la VM se borra**
-(`instanceTerminationAction: DELETE`): por eso todo se guarda en el bucket y
-el grupo administrado la recrea.
+con 8 o 12 vCPU, imagen `labo-family`. Los de la cátedra borran la VM al
+expropiarse (`DELETE`), pero GCP no acepta eso en un grupo administrado: el
+template propio usa `STOP`, y el grupo vuelve a arrancar la VM detenida.
+
+Con una sola corrida a la vez conviene `TEMPLATE=to-128ram-12vcpu` en
+`vm/vm.env`: usa los 12 vCPU de la cuota.
+
+Detalles de la imagen que el script ya resuelve:
+
+- el bucket lo monta gcsfuse para el usuario `ds` y **root no lo puede leer**:
+  los scripts de la VM acceden como `ds`;
+- gcsfuse sube un archivo recién al cerrarlo: el log se escribe en el disco
+  local y se copia al bucket cada minuto;
+- el Python es "externally managed" (PEP 668): el CLI de Kaggle se instala con
+  `pip --user --break-system-packages`;
+- desde Git Bash, `lanzar.sh` evita que las rutas del metadata se conviertan en
+  rutas de Windows.
 
 La cuota global de este proyecto es de **12 vCPUs**: dos VM de
 `to-128ram-08vcpu` (8 + 8) no entran a la vez. `lanzar.sh` lo chequea antes
 de crear nada.
 
-## Sin probar todavía
+## Primera corrida (WF9500, grupo A, 2026-10-10)
 
-Nada de esto corrió en una VM. El script se verificó solo con `parse()` de R
-y los `.sh` con `bash -n`. La primera corrida es la prueba.
+Corre en `to-128ram-12vcpu`. Tiempos medidos hasta la BO:
 
-Lo que más puede fallar o tardar:
+| Etapa | min |
+|---|---|
+| lectura + CA + drift + FE intra-mes | ~2 |
+| FE genético | 11,4 |
+| FE histórico | 6,1 |
+| FE random forest | 3,1 |
+| canaritos | 4,0 |
 
-- **El costo de la genética no está medido.** Por ronda son hasta
-  `poblacion × generaciones` = 600 entrenamientos de LightGBM (menos, porque
-  las fórmulas repetidas no se reentrenan). El mail de cada generación
-  trae los segundos por fórmula: con eso se ajustan `PARAM$GA$poblacion` y
-  `PARAM$GA$generaciones`.
-- **El uso de `gramEvol` sale de su documentación, no de una prueba:** que a
-  la función de costo le llega una expresión que `as.character()` convierte en
-  la fórmula, y que `monitorFunc` recibe `population$currentIteration` y
-  `best$cost`.
+La genética evaluó 230 fórmulas distintas (~3 s cada una). La mejor,
+`vm_mconsumosdolares * vmr_mpagado`, mejoró 2,26 M, por debajo del umbral de
+5,7 M (2 desvíos de un ruido de 2,8 M): **ninguna variable genética quedó**.
+El fitness barato y la búsqueda chica (600 contra 9.600 del default de
+gramEvol) son lo primero a revisar.
+
+Lo que la corrida confirmó: el uso de `gramEvol` (la fórmula llega a la
+función de costo y el monitor por generación funciona), los checkpoints de
+FE, el mail y la VM que retoma desde el bucket.
+
+Pendiente:
+
+- **El fitness de la genética.** Es un LightGBM de 200 árboles sobre una
+  muestra sin lags: no está validado que prediga la ganancia del workflow
+  completo. Opciones: validarlo pasando sus mejores fórmulas por el workflow
+  entero, o un fitness más fiel (dataset completo, lags de la fórmula, varias
+  semillas).
+- **El tamaño de la búsqueda** (`PARAM$GA$poblacion`, `generaciones`), que
+  con ~3 s por fórmula puede crecer mucho.
