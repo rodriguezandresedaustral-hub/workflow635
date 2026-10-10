@@ -16,6 +16,25 @@ cátedra, para los dos grupos del experimento colaborativo.
 Las funciones y celdas de la cátedra están copiadas **sin cambios** en
 `635_workflow_senior.R`; cada bloque dice de qué celda viene. Lo agregado:
 
+- **FE genético** (la consigna del FE intra-mes), después del FE intra-mes
+  manual y antes del histórico:
+  - `gramEvol` evoluciona fórmulas `v1 op v2` o `(v1 op v2) op v3` sobre los
+    campos del mes, con `+ − × /`.
+  - **Fitness:** cuánta ganancia agrega la fórmula a un LightGBM fijo, medida
+    en el mes de validación del grupo (A: 202107, B: 202105), nunca en el de
+    testing.
+  - Por ronda se queda con la mejor fórmula **solo si mejora más que 2 desvíos
+    del ruido entre semillas**; si no, corta. Cada ganadora entra como
+    `gen_01`, `gen_02`... y después recibe lags, deltas y tendencia como
+    cualquier campo.
+  - Cada fórmula evaluada queda en `genetica_log.txt` (si la VM se corta,
+    retoma sin volver a entrenar lo medido) y cada ronda en
+    `genetica_rondas.txt`.
+  - Mail cada 5 generaciones con las 10 mejores fórmulas y al terminar cada
+    ronda. El mail final dice, por variable ganadora, la fórmula, la mejora,
+    si sobrevivió a canaritos y su puesto en la importancia del modelo final.
+  - Los parámetros (`PARAM$GA$...`: rondas, población, generaciones, meses,
+    LightGBM del fitness) están al principio del script.
 - **Configuración en `.env`**: grupo, rutas, mail, Kaggle. Si falta una
   variable, corta al arrancar con su nombre.
 - **Semillas fijas**: primigenia 100213, semillerio de 9:
@@ -104,3 +123,15 @@ de crear nada.
 
 Nada de esto corrió en una VM. El script se verificó solo con `parse()` de R
 y los `.sh` con `bash -n`. La primera corrida es la prueba.
+
+Lo que más puede fallar o tardar:
+
+- **El costo de la genética no está medido.** Por ronda son hasta
+  `poblacion × generaciones` = 600 entrenamientos de LightGBM (menos, porque
+  las fórmulas repetidas no se reentrenan). El mail de cada 5 generaciones
+  trae los segundos por fórmula: con eso se ajustan `PARAM$GA$poblacion` y
+  `PARAM$GA$generaciones`.
+- **El uso de `gramEvol` sale de su documentación, no de una prueba:** que a
+  la función de costo le llega una expresión que `as.character()` convierte en
+  la fórmula, y que `monitorFunc` recibe `population$currentIteration` y
+  `best$cost`.
