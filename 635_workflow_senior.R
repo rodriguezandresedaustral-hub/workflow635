@@ -103,8 +103,13 @@ PARAM$FE_rf$run <- TRUE
 # solo si mejora mas que 2 desvios del ruido entre semillas; si no, se descarta
 # y la ronda siguiente busca de nuevo con otra semilla.
 PARAM$GA$rondas        <- 3     # cuantas variables geneticas buscar como maximo
-PARAM$GA$poblacion     <- 30    # formulas por generacion
-PARAM$GA$generaciones  <- 20    # generaciones por ronda
+PARAM$GA$poblacion     <- as.integer(Sys.getenv("GA_POBLACION", "30"))     # formulas por generacion
+PARAM$GA$generaciones  <- as.integer(Sys.getenv("GA_GENERACIONES", "20"))  # generaciones por ronda
+# GA_CON_HISTORIA=1: la genetica corre despues del FE historico; el fitness ve
+# el dataset con lags, deltas y tendencias, y cada formula entra con sus propios
+# lag1, lag2, delta1 y delta2 (como la va a ver el modelo final). 0 = antes del
+# FE historico, solo con los campos del mes.
+PARAM$GA$con_historia  <- Sys.getenv("GA_CON_HISTORIA", "0") == "1"
 PARAM$GA$mail_cada_gen <- 1     # mail de avance cada N generaciones
 PARAM$GA$horas_max     <- Inf   # sin tope: la genetica corre todas sus rondas y
                                 # generaciones. Con un numero, al llegar a esas horas
@@ -336,6 +341,32 @@ ga_horas_usadas <- function() {
   sum(fread(ARCH_GA_LOG, sep= "\t")$segundos, na.rm= TRUE) / 3600
 }
 
+# lags y deltas de una columna por cliente, igual que la celda 51 del z635
+# (dataset ordenado por numero_de_cliente, foto_mes)
+ga_derivadas <- function(v) {
+  id <- dataset$numero_de_cliente
+  mismo1 <- id == shift(id, 1)
+  mismo2 <- id == shift(id, 2)
+  l1 <- shift(v, 1); l1[is.na(mismo1) | !mismo1] <- NA
+  l2 <- shift(v, 2); l2[is.na(mismo2) | !mismo2] <- NA
+  list(lag1= l1, lag2= l2, delta1= v - l1, delta2= v - l2)
+}
+
+# las columnas que una formula agrega a la muestra del fitness
+ga_columnas_candidato <- function(formula) {
+  if (!PARAM$GA$con_historia) {
+    v <- ga_evaluar_formula(formula, GA$datos)
+    if (is.null(v)) return(NULL)
+    return(cbind(gen= v))
+  }
+  v <- ga_evaluar_formula(formula, dataset)
+  if (is.null(v)) return(NULL)
+  d <- ga_derivadas(v)
+  f <- GA$filas
+  cbind(gen= v[f], gen_lag1= d$lag1[f], gen_lag2= d$lag2[f],
+        gen_delta1= d$delta1[f], gen_delta2= d$delta2[f])
+}
+
 # la funcion de costo de gramEvol (minimiza): -(mejora en ganancia)
 ga_costo <- function(expr) {
   formula <- as.character(expr)
@@ -349,12 +380,12 @@ ga_costo <- function(expr) {
   # el cache gramEvol seguiria otro camino
   rng <- get(".Random.seed", envir= globalenv())
   t0 <- Sys.time()
-  v <- ga_evaluar_formula(formula, GA$datos)
-  if (is.null(v)) {
+  cols <- ga_columnas_candidato(formula)
+  if (is.null(cols)) {
     ganancia <- NA_real_
     mejora <- GA_PENALIDAD
   } else {
-    ganancia <- ga_entrenar(cbind(GA$X, gen= v), PARAM$semilla_primigenia)
+    ganancia <- ga_entrenar(cbind(GA$X, cols), PARAM$semilla_primigenia)
     mejora <- ganancia - GA$base
   }
   assign(".Random.seed", rng, envir= globalenv())
@@ -408,6 +439,8 @@ correr_genetica <- function() {
   filas <- (dataset$foto_mes %in% PARAM$GA$entrena &
              (dataset$clase_ternaria %in% positivos | azar < PARAM$GA$undersampling)) |
            dataset$foto_mes %in% PARAM$GA$valida
+  if (PARAM$GA$con_historia) setorder(dataset, numero_de_cliente, foto_mes)
+  GA$filas <- which(filas)
   GA$datos <- dataset[filas]
   GA$es_valid <- GA$datos$foto_mes %in% PARAM$GA$valida
   GA$label <- as.integer(GA$datos$clase_ternaria %in% positivos)
@@ -416,6 +449,8 @@ correr_genetica <- function() {
   numericas <- names(GA$datos)[sapply(GA$datos, is.numeric)]
   campos_modelo <- setdiff(numericas, "numero_de_cliente")
   vars <- setdiff(numericas, c("numero_de_cliente", "foto_mes"))
+  # con historia, se combinan solo los campos del mes (no los lags ni tendencias)
+  if (PARAM$GA$con_historia) vars <- intersect(GA_CAMPOS_MES, vars)
   GA$X <- data.matrix(GA$datos[, campos_modelo, with= FALSE])
   loguear("genetica: muestra de", nrow(GA$datos), "filas,", length(vars), "campos para combinar")
 
@@ -474,9 +509,9 @@ correr_genetica <- function() {
     }
 
     if (fila$aceptada) {
-      v <- ga_evaluar_formula(fila$formula, GA$datos)
-      GA$X <- cbind(GA$X, v)
-      colnames(GA$X)[ncol(GA$X)] <- fila$nombre
+      cols <- ga_columnas_candidato(fila$formula)
+      colnames(cols) <- sub("^gen", fila$nombre, colnames(cols))
+      GA$X <- cbind(GA$X, cols)
     } else {
       loguear("genetica: la ronda", r, "no supero el ruido: se descarta y sigue la ronda", r + 1)
     }
@@ -491,6 +526,20 @@ correr_genetica <- function() {
     v <- ga_evaluar_formula(g$formula, dataset)
     if (is.null(v)) stop("la formula genetica ", g$formula, " no se puede evaluar en el dataset completo")
     set(dataset, j= g$nombre, value= v)
+    if (PARAM$GA$con_historia) {
+      # el FE historico ya corrio: la ganadora recibe lo mismo que cualquier campo
+      d <- ga_derivadas(v)
+      for (k in names(d)) set(dataset, j= paste0(g$nombre, "_", k), value= d[[k]])
+      if (PARAM$FE_hist$Tendencias$run)
+        TendenciaYmuchomas(dataset, cols= g$nombre,
+          ventana= PARAM$FE_hist$Tendencias$ventana,
+          tendencia= PARAM$FE_hist$Tendencias$tendencia,
+          minimo= PARAM$FE_hist$Tendencias$minimo,
+          maximo= PARAM$FE_hist$Tendencias$maximo,
+          promedio= PARAM$FE_hist$Tendencias$promedio,
+          ratioavg= PARAM$FE_hist$Tendencias$ratioavg,
+          ratiomax= PARAM$FE_hist$Tendencias$ratiomax)
+    }
     loguear("genetica: agregada", g$nombre, "=", g$formula)
   }
   PARAM$GA$ganadoras <<- ga_ganadoras()
@@ -1236,10 +1285,15 @@ AgregarVariables_IntraMes <- function(dataset) {
 AgregarVariables_IntraMes(dataset)
 
     fin_etapa()
+    # los campos del mes: lo que combina la genetica
+    GA_CAMPOS_MES <- setdiff(names(dataset)[sapply(dataset, is.numeric)],
+                             c("numero_de_cliente", "foto_mes"))
 
-    etapa("FE genetico")
-    correr_genetica()
-    fin_etapa(texto_ganadoras())
+    if (!PARAM$GA$con_historia) {
+      etapa("FE genetico")
+      correr_genetica()
+      fin_etapa(texto_ganadoras())
+    }
 
     etapa("FE historico")
 # --- z635 celda 48 ---
@@ -1459,8 +1513,15 @@ if( PARAM$FE_hist$Tendencias$run) {
   )
 }
 
+    fin_etapa()
+
+    if (PARAM$GA$con_historia) {
+      etapa("FE genetico")
+      correr_genetica()
+      fin_etapa(texto_ganadoras())
+    }
+
     grabar_checkpoint(CK_HIST)
-    fin_etapa("Checkpoint grabado: si se corta, retoma desde aca.")
 
   } else {
     dataset <- leer_checkpoint(CK_HIST)
@@ -1962,6 +2023,19 @@ PARAM$hipeparametertuning$hs <- makeParamSet(
   makeNumericParam("feature_fraction", lower= 0.05, upper= 0.90),
   makeNumericParam("min_sum_hessian_in_leaf", lower= -10.0, upper= 10.0, trafo= function(x) 2^x)
 )
+
+# --- rango de la BO (despues de la celda 86) ---------------------------------
+# Techo de num_iterations y num_leaves configurable desde el .env, en log2.
+# Default = el rango del z635: 2^10 = 1024 arboles y 2^11 = 2048 hojas.
+# En WF9501 las 5 mejores evaluaciones quedaron pegadas a esos dos techos.
+PARAM$BO$techo_log2_num_iterations <- as.numeric(Sys.getenv("BO_TECHO_LOG2_ITERACIONES", "10"))
+PARAM$BO$techo_log2_num_leaves     <- as.numeric(Sys.getenv("BO_TECHO_LOG2_HOJAS", "11"))
+PARAM$hipeparametertuning$hs$pars$num_iterations$upper <- PARAM$BO$techo_log2_num_iterations
+PARAM$hipeparametertuning$hs$pars$num_leaves$upper     <- PARAM$BO$techo_log2_num_leaves
+loguear("BO: rango num_iterations 2^", PARAM$hipeparametertuning$hs$pars$num_iterations$lower,
+        "a 2^", PARAM$hipeparametertuning$hs$pars$num_iterations$upper,
+        ", num_leaves 2^", PARAM$hipeparametertuning$hs$pars$num_leaves$lower,
+        "a 2^", PARAM$hipeparametertuning$hs$pars$num_leaves$upper)
 
 # --- z635 celda 88 (+ registrar_eval) ---
 # En  x llegan los parmaetros de la bayesiana
