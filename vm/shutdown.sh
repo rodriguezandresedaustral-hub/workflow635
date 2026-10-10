@@ -20,9 +20,10 @@ for d in $PARA; do RCPT="$RCPT --mail-rcpt $d"; done
 
 M=$(mktemp)
 # va al hilo "experimento" de Gmail, el mismo que usa el script de R
-RAIZ="<wf$EXPERIMENTO-$(echo $GRUPO | tr A-Z a-z)-experimento@workflow635>"
-printf "From: %s\nTo: %s\nSubject: Re: [WF%s grupo %s] experimento\nIn-Reply-To: %s\nReferences: %s\n\nVM expropiada\n\nGCP expropio la VM %s. El grupo la vuelve a arrancar solo y retoma desde los checkpoints del bucket.\n" \
-  "$MAIL_FROM" "$(echo $PARA | sed 's/ /, /g')" "$EXPERIMENTO" "$GRUPO" "$RAIZ" "$RAIZ" "$(meta name)" > "$M"
+CORRIDA=$(cat /home/ds/wf635_corrida_actual 2>/dev/null || echo "WF$EXPERIMENTO")
+RAIZ="<$(echo $CORRIDA | tr A-Z a-z)-$(echo $GRUPO | tr A-Z a-z)-experimento@workflow635>"
+printf "From: %s\nTo: %s\nSubject: Re: [%s grupo %s] experimento\nIn-Reply-To: %s\nReferences: %s\n\nVM expropiada\n\nGCP expropio la VM %s. El grupo la vuelve a arrancar solo y retoma desde los checkpoints del bucket.\n" \
+  "$MAIL_FROM" "$(echo $PARA | sed 's/ /, /g')" "$CORRIDA" "$GRUPO" "$RAIZ" "$RAIZ" "$(meta name)" > "$M"
 
 curl -s --max-time 20 --ssl-reqd --url smtps://smtp.gmail.com:465 \
   --mail-from "$MAIL_FROM" $RCPT \
