@@ -47,8 +47,8 @@ describir() { gcloud compute instance-templates describe "$TEMPLATE" --region "$
 MAQUINA=$(describir properties.machineType)
 VCPU=$(echo "$MAQUINA" | cut -d- -f3)
 read LIMITE USO < <(gcloud compute project-info describe --project "$PROJECT" \
-  --flatten=quotas --filter="quotas.metric=CPUS_ALL_REGIONS" \
-  --format="value(quotas.limit,quotas.usage)")
+  --flatten=quotas --format="csv[no-heading](quotas.metric,quotas.limit,quotas.usage)" \
+  | awk -F, '$1 == "CPUS_ALL_REGIONS" {print $2, $3}')
 echo "cuota CPUS_ALL_REGIONS: usadas ${USO%.*} de ${LIMITE%.*}; $TEMPLATE pide $VCPU"
 if [ $(( ${USO%.*} + VCPU )) -gt ${LIMITE%.*} ]; then
   echo "NO ENTRA en la cuota: parar otra VM o usar un template mas chico"; exit 1
