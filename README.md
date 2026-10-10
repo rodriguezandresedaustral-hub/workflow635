@@ -18,8 +18,9 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
 
 - **Configuración en `.env`**: grupo, rutas, mail, Kaggle. Si falta una
   variable, corta al arrancar con su nombre.
-- **Semillas fijas**: primigenia 100213, semillerio
-  `100213, 100313, 100613, 100913, 101113` (en vez de primos al azar).
+- **Semillas fijas**: primigenia 100213, semillerio de 9:
+  `100213, 100313, 100613, 100913, 101113` más 4 primos sorteados
+  `570991, 669287, 832421, 882599` (en vez de 10 primos al azar).
 - **Mail a una lista**: arranque, fin de cada etapa, cada N evaluaciones de la
   BO, error (con la etapa), fin, y si GCP expropia la VM. Un mail que falla no
   corta la corrida.

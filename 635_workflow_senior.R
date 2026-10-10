@@ -66,8 +66,11 @@ PARAM$experimento <- as.integer(Sys.getenv("EXPERIMENTO"))
 PARAM$grupo <- GRUPO
 PARAM$dataset <- basename(Sys.getenv("DATASET_PATH"))
 
-# semillerio del final training: semillas fijas
-PARAM$FT$semillas <- c(100213, 100313, 100613, 100913, 101113)
+# semillerio del final training: semillas fijas. Las 5 primeras son del
+# usuario; las 4 ultimas son primos sorteados con
+#   set.seed(100213); sample(setdiff(primes::generate_primes(100000, 1000000), mias), 4)
+PARAM$FT$semillas <- c(100213, 100313, 100613, 100913, 101113,
+                       570991, 669287, 832421, 882599)
 PARAM$FT$semillerio <- length(PARAM$FT$semillas)
 
 PARAM$mail$desde    <- Sys.getenv("MAIL_FROM")
