@@ -67,25 +67,80 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
 
 ## Puesta en marcha
 
-Una sola vez, en el bucket (nada de esto va al repo, que es público):
+Todo se hace desde **Git Bash** en tu PC, con `gcloud` instalado y logueado
+con la cuenta dueña del proyecto de la cátedra (`gcloud auth login`). Nada
+secreto va al repo, que es público: la clave del mail, los destinatarios y
+el `kaggle.json` viven en tu bucket.
+
+### 1. Tus datos de GCP
 
 ```sh
-# app password de Gmail de la cuenta que manda (https://myaccount.google.com/apppasswords)
-printf '%s' 'xxxxxxxxxxxxxxxx' | gsutil cp - gs://<bucket>/secrets/gmail_app_password
-# destinatarios, uno por línea
-gsutil cp destinatarios.txt gs://<bucket>/wf635/destinatarios.txt
-# solo grupo A
+gcloud projects list                          # PROJECT_ID de tu proyecto de la cátedra
+gcloud compute instance-templates list        # tienen que aparecer los to-128ram-...
+gsutil ls                                      # el nombre de tu bucket (gs://...)
+gsutil ls gs://<bucket>/datasets/              # tiene que estar analistasr_competencia_2026.csv.gz
+```
+
+Si no ves los templates `to-...`, tu proyecto no tiene la infra de la cátedra
+armada: hay que correr primero su script de alta.
+
+### 2. El mail
+
+El script manda los mails desde una cuenta de Gmail con una **app password**
+(una clave de 16 letras solo para esto; no es la clave de la cuenta).
+
+1. En la cuenta que va a mandar, activá la **verificación en 2 pasos**:
+   https://myaccount.google.com/signinoptions/twosv (sin eso Google no deja
+   crear app passwords).
+2. Creá la app password en https://myaccount.google.com/apppasswords
+   (nombre: `workflow635`). Copiá las 16 letras **sin espacios**.
+3. Subila al bucket (reemplazá las x y el bucket):
+   ```sh
+   printf '%s' 'xxxxxxxxxxxxxxxx' | gsutil cp - gs://<bucket>/secrets/gmail_app_password
+   ```
+4. Los destinatarios, uno por línea (puede ser la misma cuenta u otras):
+   ```sh
+   printf 'vos@gmail.com\notro@gmail.com\n' | gsutil cp - gs://<bucket>/wf635/destinatarios.txt
+   ```
+5. Probá que anda **antes de lanzar**, desde Git Bash (`curl` ya viene):
+   ```sh
+   DESDE=tu_cuenta@gmail.com; PARA=vos@gmail.com
+   printf "From: $DESDE\nTo: $PARA\nSubject: prueba workflow635\n\nanda\n" > /tmp/m.txt
+   curl -s --ssl-reqd --url smtps://smtp.gmail.com:465 --mail-from $DESDE --mail-rcpt $PARA \
+     --user "$DESDE:$(gsutil cat gs://<bucket>/secrets/gmail_app_password)" -T /tmp/m.txt; echo "codigo: $?"
+   ```
+   `codigo: 0` = enviado. `67` = Google rechazó el login: la app password no
+   es de esa cuenta o tiene espacios.
+
+Los mails llegan en **dos hilos** por experimento: `[WF<exp> grupo A]
+experimento` (arranque, fin de cada etapa con sus tiempos, errores, VM
+expropiada, registro final) e `[WF<exp> grupo A] iteraciones` (cada
+generación de la genética y el avance de la BO).
+
+### 3. Kaggle (solo grupo A)
+
+Bajá tu `kaggle.json` de https://www.kaggle.com/settings (API → Create New
+Token) y subilo:
+
+```sh
 gsutil cp kaggle.json gs://<bucket>/kaggle/kaggle.json
 ```
 
-En el repo, desde Git Bash:
+El CLI de Kaggle lo instala el script en la VM. Si falta el `kaggle.json`,
+llega un mail de aviso al arrancar y al final los archivos quedan en
+`exp/WF<exp>/kaggle/` para subir a mano.
+
+### 4. Configuración y lanzamiento
 
 ```sh
-cp vm/vm.env.example vm/vm.env     # proyecto, zona, template, bucket
-cp .env.example .env.A             # GRUPO=A, EXPERIMENTO, MAIL_FROM...
-cp .env.example .env.B             # GRUPO=B, otro EXPERIMENTO
+cp vm/vm.env.example vm/vm.env     # PROJECT, BUCKET, TEMPLATE (to-128ram-12vcpu)
+cp .env.example .env.A             # GRUPO=A, EXPERIMENTO, MAIL_FROM=tu_cuenta@gmail.com
 vm/lanzar.sh A
 ```
+
+`EXPERIMENTO` es la carpeta de salida (`exp/WF<EXPERIMENTO>`): uno distinto
+por corrida, si no retoma la anterior. Los `.env.*` y `vm/vm.env` no se
+commitean (están en el `.gitignore`).
 
 `lanzar.sh`:
 
@@ -153,6 +208,12 @@ La genética evaluó 230 fórmulas distintas (~3 s cada una). La mejor,
 5,7 M (2 desvíos de un ruido de 2,8 M): **ninguna variable genética quedó**.
 El fitness barato y la búsqueda chica (600 contra 9.600 del default de
 gramEvol) son lo primero a revisar.
+
+Esa corrida usaba para el fitness solo 202101-202105 con el 10% de los
+CONTINUA, y cortaba la genética en la primera ronda que no superaba el ruido.
+Las dos cosas se cambiaron: el fitness usa los meses de la training strategy
+del z635 (201901-202105, 20% de CONTINUA, mide en 202107: 1.037.931 filas,
+ruido 3,1 M) y corren todas las rondas. La corrida con eso es **WF9501**.
 
 Lo que la corrida confirmó: el uso de `gramEvol` (la fórmula llega a la
 función de costo y el monitor por generación funciona), los checkpoints de
