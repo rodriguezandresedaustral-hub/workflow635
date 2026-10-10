@@ -191,10 +191,13 @@ fin_etapa <- function(detalle= "") {
   mins <- as.numeric(difftime(Sys.time(), T_ETAPA, units= "mins"))
   loguear("=== fin etapa", ETAPA, sprintf("(%.1f min)", mins))
   TIEMPOS <<- rbind(TIEMPOS, data.table(etapa= ETAPA, minutos= round(mins, 1)))
-  mandar_mail(paste("termino", ETAPA),
+  total_h <- as.numeric(difftime(Sys.time(), T_INICIO, units= "hours"))
+  mandar_mail(sprintf("termino %s (%.1f min)", ETAPA, mins),
     paste0("Etapa ", ETAPA, " terminada en ", sprintf("%.1f", mins), " min.\n",
            if (exists("dataset")) paste0("dataset: ", nrow(dataset), " filas x ", ncol(dataset), " columnas\n") else "",
-           detalle))
+           detalle, "\n\n",
+           "Tiempos de esta sesion (", sprintf("%.1f", total_h), " h en total):\n",
+           paste(sprintf("  %-28s %8.1f min", TIEMPOS$etapa, TIEMPOS$minutos), collapse= "\n")))
 }
 
 options(error= function() {
@@ -455,6 +458,33 @@ correr_genetica <- function() {
   PARAM$GA$ganadoras <<- ga_ganadoras()
   rm(list= c("datos", "X"), envir= GA)
   gc(verbose= FALSE)
+}
+
+# GRUPO A: Kaggle se prepara y se prueba al arrancar. Si no anda, avisa por
+# mail ahora; la corrida sigue y los archivos para subir quedan en ./kaggle
+KAGGLE_OK <- FALSE
+if (GRUPO == "A") {
+  dir.create("~/.kaggle", showWarnings= FALSE)
+  if (!file.exists("~/.kaggle/kaggle.json") && file.exists(Sys.getenv("KAGGLE_JSON"))) {
+    file.copy(Sys.getenv("KAGGLE_JSON"), "~/.kaggle/kaggle.json")
+    Sys.chmod("~/.kaggle/kaggle.json", "600")
+  }
+  kaggle_bin <- Sys.getenv("KAGGLE_BIN", "kaggle")
+  probar_kaggle <- function() {
+    out <- suppressWarnings(tryCatch(system2(kaggle_bin, "--version", stdout= TRUE, stderr= TRUE),
+      error= function(e) structure("no se pudo ejecutar", status= 127L)))
+    is.null(attr(out, "status"))
+  }
+  if (!probar_kaggle()) {
+    loguear("kaggle no responde: instalo el CLI con pip")
+    system2("python3", c("-m", "pip", "install", "--user", "--quiet", "kaggle"))
+    if (kaggle_bin == "kaggle") kaggle_bin <- path.expand("~/.local/bin/kaggle")
+  }
+  KAGGLE_OK <- file.exists("~/.kaggle/kaggle.json") && probar_kaggle()
+  if (!KAGGLE_OK) mandar_mail("AVISO: Kaggle no funciona",
+    paste0("No hay ~/.kaggle/kaggle.json (KAGGLE_JSON=", Sys.getenv("KAGGLE_JSON"),
+           ") o el CLI no responde. La corrida sigue; al final los archivos quedan en ",
+           carpeta_exp, "/kaggle y no se suben."))
 }
 
 CK_HIST <- "checkpoints/dataset_fe_historico.fst"
@@ -2181,13 +2211,7 @@ resumen <- ""
 
 if (GRUPO == "A") {
   etapa("kaggle")
-  # el z635 no instala el kaggle.json: se copia desde el bucket
-  dir.create("~/.kaggle", showWarnings= FALSE)
-  if (!file.exists("~/.kaggle/kaggle.json")) {
-    file.copy(Sys.getenv("KAGGLE_JSON"), "~/.kaggle/kaggle.json")
-    Sys.chmod("~/.kaggle/kaggle.json", "600")
-  }
-  kaggle_bin <- Sys.getenv("KAGGLE_BIN", "kaggle")
+  # kaggle.json y el CLI se prepararon al arrancar (KAGGLE_OK)
   PARAM$kaggle$competencia <- Sys.getenv("KAGGLE_COMPETENCIA")
 
   setorder(tb_prediccion, -prob)
@@ -2204,6 +2228,7 @@ if (GRUPO == "A") {
     if (file.exists(marca)) { loguear("ya subido:", archivo_kaggle); next }
 
     fwrite(tb_prediccion[, list(numero_de_cliente, Predicted)], file= archivo_kaggle, sep= ",")
+    if (!KAGGLE_OK) { loguear("sin Kaggle: queda", archivo_kaggle, "para subir a mano"); next }
 
     linea <- paste(kaggle_bin, "competitions submit",
       "-c", PARAM$kaggle$competencia,
