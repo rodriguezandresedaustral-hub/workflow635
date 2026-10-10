@@ -151,22 +151,40 @@ destinatarios <- function() {
   d[d != "" & !startsWith(d, "#")]
 }
 
-mandar_mail <- function(titulo, cuerpo) {
+# Dos hilos de Gmail por experimento: "experimento" (arranque, etapas, errores,
+# fin) e "iteraciones" (generaciones de la genetica, rondas, avance de la BO).
+# Gmail agrupa por asunto igual + References al primer mensaje del hilo. El
+# Message-ID del primero es fijo; la marca .mail_hilo_<hilo> dice si ya salio.
+# (Sin sample(): el RNG no se puede tocar durante la genetica.)
+MAIL_N <- 0L
+id_hilo <- function(hilo) sprintf("<wf%d-%s-%s@workflow635>", PARAM$experimento, tolower(GRUPO), hilo)
+
+mandar_mail <- function(titulo, cuerpo, hilo= "experimento") {
   tryCatch({
     para <- destinatarios()
     pass_file <- Sys.getenv("MAIL_PASS_FILE")
     if (!length(para)) { loguear("SIN MAIL: no hay destinatarios en", Sys.getenv("MAIL_TO_FILE")); return(invisible(FALSE)) }
     if (!file.exists(pass_file)) { loguear("SIN MAIL: no existe", pass_file); return(invisible(FALSE)) }
     pass <- trimws(readLines(pass_file, warn= FALSE)[1])
-    titulo <- sprintf("[WF%d grupo %s] %s", PARAM$experimento, GRUPO, titulo)
+    asunto <- sprintf("[WF%d grupo %s] %s", PARAM$experimento, GRUPO, hilo)
+    raiz <- id_hilo(hilo)
+    marca <- paste0(".mail_hilo_", hilo)
+    es_primero <- !file.exists(marca)
+    MAIL_N <<- MAIL_N + 1L
+    msg_id <- if (es_primero) raiz else sprintf("<wf%d-%s-%s-%s-%d@workflow635>",
+      PARAM$experimento, tolower(GRUPO), hilo, format(Sys.time(), "%Y%m%d%H%M%OS6"), MAIL_N)
 
     archivo <- tempfile(fileext= ".txt")
     writeLines(c(
       paste0("From: ", PARAM$mail$desde),
       paste0("To: ", paste(para, collapse= ", ")),
-      paste0("Subject: ", titulo),
+      paste0("Subject: ", if (es_primero) asunto else paste("Re:", asunto)),
+      paste0("Message-ID: ", msg_id),
+      if (!es_primero) c(paste0("In-Reply-To: ", raiz), paste0("References: ", raiz)),
       "Content-Type: text/plain; charset=UTF-8",
       "",
+      titulo,
+      strrep("-", nchar(titulo)),
       cuerpo), archivo)
 
     rc <- system2("curl", c("-s", "--ssl-reqd",
@@ -176,7 +194,8 @@ mandar_mail <- function(titulo, cuerpo) {
       "--user", shQuote(paste0(PARAM$mail$desde, ":", pass)),
       "-T", archivo), stdout= FALSE, stderr= FALSE)
     unlink(archivo)
-    if (rc == 0) loguear("mail enviado:", titulo) else loguear("FALLO el mail (curl rc =", rc, "):", titulo)
+    if (rc == 0 && es_primero) writeLines(raiz, marca)
+    if (rc == 0) loguear("mail enviado [", hilo, "]:", titulo) else loguear("FALLO el mail (curl rc =", rc, "):", titulo)
     invisible(rc == 0)
   }, error= function(e) { loguear("FALLO el mail:", conditionMessage(e)); invisible(FALSE) })
 }
@@ -341,7 +360,7 @@ ga_monitor <- function(resultado) {
   if (is.na(gen) || PARAM$GA$mail_cada_gen <= 0 || gen %% PARAM$GA$mail_cada_gen != 0) return(invisible())
   log_ga <- fread(ARCH_GA_LOG, sep= "\t")[ronda == GA$ronda & !es_referencia(formula)]
   top <- head(log_ga[order(-mejora)], 10)
-  mandar_mail(sprintf("genetica ronda %d, generacion %d", GA$ronda, gen),
+  mandar_mail(sprintf("genetica ronda %d, generacion %d", GA$ronda, gen), hilo= "iteraciones",
     paste0("Formulas evaluadas en la ronda: ", nrow(log_ga),
            sprintf(" (%.0f s promedio cada una)", mean(log_ga$segundos[log_ga$segundos > 0])), "\n",
            sprintf("Horas usadas: %.1f de %g\n", GA$horas + GA$horas_sesion(), PARAM$GA$horas_max),
@@ -442,7 +461,7 @@ correr_genetica <- function() {
         evaluaciones= nrow(fread(ARCH_GA_LOG, sep= "\t")[ronda == r & !es_referencia(formula)]))
       fwrite(fila, ARCH_GA_RONDAS, sep= "\t", append= file.exists(ARCH_GA_RONDAS))
       mandar_mail(sprintf("genetica ronda %d terminada%s", r, if (corto) " (tope de horas)" else ""),
-                  texto_ganadoras())
+                  texto_ganadoras(), hilo= "iteraciones")
     }
 
     if (fila$aceptada) {
@@ -1872,7 +1891,7 @@ registrar_eval <- function(x, AUC) {
   if (PARAM$mail$cada_iter > 0 && BO_EVALS %% PARAM$mail$cada_iter == 0) {
     tb <- fread("BO_iter.txt")
     mejor <- tb[which.max(AUC)]
-    mandar_mail(sprintf("BO: %d evaluaciones", BO_EVALS),
+    mandar_mail(sprintf("BO: %d evaluaciones", BO_EVALS), hilo= "iteraciones",
       paste0("Mejor AUC hasta ahora: ", round(mejor$AUC, 6), " (evaluacion ", mejor$eval, ")\n",
              "Ultima: ", round(AUC, 6), "\n\n",
              paste(capture.output(print(tail(tb, PARAM$mail$cada_iter))), collapse= "\n")))

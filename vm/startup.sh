@@ -41,8 +41,10 @@ mail() {   # mail <titulo> <cuerpo>
   para=$(ds cat "$MAIL_TO_FILE" | grep -v '^#' | sed '/^[[:space:]]*$/d')
   for d in $para; do rcpt="$rcpt --mail-rcpt $d"; done
   m=$(mktemp)
-  printf "From: %s\nTo: %s\nSubject: [WF%s grupo %s] %s\n\n%s\n" \
-    "$MAIL_FROM" "$(echo $para | sed 's/ /, /g')" "$EXPERIMENTO" "$GRUPO" "$1" "$2" > "$m"
+  # va al hilo "experimento" de Gmail, el mismo que usa el script de R
+  local raiz="<wf$EXPERIMENTO-$(echo $GRUPO | tr A-Z a-z)-experimento@workflow635>"
+  printf "From: %s\nTo: %s\nSubject: Re: [WF%s grupo %s] experimento\nIn-Reply-To: %s\nReferences: %s\n\n%s\n\n%s\n" \
+    "$MAIL_FROM" "$(echo $para | sed 's/ /, /g')" "$EXPERIMENTO" "$GRUPO" "$raiz" "$raiz" "$1" "$2" > "$m"
   curl -s --max-time 30 --ssl-reqd --url smtps://smtp.gmail.com:465 \
     --mail-from "$MAIL_FROM" $rcpt \
     --user "$MAIL_FROM:$(ds head -1 "$MAIL_PASS_FILE" | tr -d '[:space:]')" -T "$m"
