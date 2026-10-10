@@ -81,7 +81,9 @@ CUENTA=$(describir "properties.serviceAccounts[0].email")
 TAGS=$(describir "properties.tags.items" | tr ';' ',')
 
 METADATA="wf-dir=$DIR,bucket-dir=$BUCKET_DIR_VM,apagar-al-terminar=$APAGAR_AL_TERMINAR,proyecto=$PROJECT,mig=$MIG"
-HASH=$( (cat "$TMP/startup.sh" "$TMP/shutdown.sh"; echo "$TEMPLATE $METADATA") | md5sum | cut -c1-8)
+# STOP y no DELETE: GCP no acepta Spot con DELETE en un grupo administrado.
+# Con STOP el grupo vuelve a arrancar la VM detenida cuando hay capacidad.
+HASH=$( (cat "$TMP/startup.sh" "$TMP/shutdown.sh"; echo "$TEMPLATE $METADATA STOP") | md5sum | cut -c1-8)
 PROPIO="$MIG-$HASH"
 
 if gcloud compute instance-templates describe "$PROPIO" --region "$REGION" --project "$PROJECT" >/dev/null 2>&1; then
@@ -92,7 +94,7 @@ else
     --machine-type "$MAQUINA" \
     --image-project "$IMG_PROYECTO" --image-family "$IMG_FAMILIA" \
     --boot-disk-size "${DISCO_GB}GB" --boot-disk-type "$DISCO_TIPO" \
-    --provisioning-model SPOT --instance-termination-action DELETE \
+    --provisioning-model SPOT --instance-termination-action STOP \
     --maintenance-policy TERMINATE --no-restart-on-failure \
     --service-account "$CUENTA" --scopes cloud-platform \
     --tags "$TAGS" \
