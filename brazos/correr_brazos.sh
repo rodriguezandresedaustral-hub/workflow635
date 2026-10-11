@@ -6,11 +6,11 @@
 #   Por cada semilla del pipeline corre los tres brazos seguidos: si la cola se
 #   corta a mitad, lo que termino ya esta pareado por semilla.
 #
-# Lanzar desde un usuario con sudo (cada corrida va como ds, duena del bucket):
-#   nohup setsid bash brazos/correr_brazos.sh > /dev/null 2>&1 &
-# Opcionales:
+# Corre como ds, duena del bucket (en las VM de la catedra los demas usuarios
+# no pueden leerlo). Desde un usuario con sudo, para que apague al terminar:
+#   cd /tmp && nohup setsid bash -c 'sudo -u ds -H bash /home/ds/buckets/b1/wf635v2/brazos/correr_brazos.sh; sudo poweroff' > ~/cola_brazos.log 2>&1 < /dev/null &
+# Opcionales (con sudo -u ds -H env VAR=... bash ...):
 #   SEMILLAS="100213 100313"  BRAZOS="E0"  REINTENTOS=1
-#   APAGAR=1               apaga la VM cuando termina la cola
 #   BORRAR_CHECKPOINTS=1   borra los .fst de checkpoints/ de cada corrida TERMINADA
 # Para frenar al terminar la corrida en curso: touch $EXP/brazos_v2/PARAR
 # Una corrida con TERMINADO se saltea; una que fallo se relanza y retoma desde
@@ -23,19 +23,13 @@ LOGS=$EXP/brazos_v2
 SEMILLAS=${SEMILLAS:-"100213 100313 100613 100913 101113 570991"}
 BRAZOS=${BRAZOS:-"E0 E1 E2"}
 REINTENTOS=${REINTENTOS:-1}
-APAGAR=${APAGAR:-0}
 BORRAR_CHECKPOINTS=${BORRAR_CHECKPOINTS:-1}
 
-# el bucket es de ds: la cola corre como ds y, si hace falta, apaga desde afuera
-if [ "$(id -un)" != ds ]; then
-  sudo -u ds -H env SEMILLAS="$SEMILLAS" BRAZOS="$BRAZOS" REINTENTOS="$REINTENTOS" \
-    BORRAR_CHECKPOINTS="$BORRAR_CHECKPOINTS" bash "$DIR/brazos/correr_brazos.sh"
-  rc=$?
-  [ "$APAGAR" = 1 ] && sudo poweroff
-  exit $rc
-fi
-
+if [ "$(id -un)" != ds ]; then echo "correr como ds: sudo -u ds -H bash $0"; exit 1; fi
 mkdir -p "$LOGS"
+# sudo deja el directorio del usuario que lanzo, que ds no puede leer, y
+# install.packages vuelve a el al terminar
+cd "$DIR" || exit 1
 exec 9>/tmp/correr_brazos.lock
 flock -n 9 || { echo "ya hay una cola corriendo"; exit 1; }
 

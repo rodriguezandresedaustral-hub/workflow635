@@ -55,13 +55,21 @@ tres brazos:
 ## Cómo correrlo
 
 En una VM con el bucket montado (no Spot: una corrida tarda horas y la cola,
-más de un día), con el repo en el bucket y desde un usuario con sudo (cada
-corrida va como `ds`, dueña del bucket):
+más de un día), con el repo copiado en `/home/ds/buckets/b1/wf635v2`. La cola
+corre como `ds`, dueña del bucket: en las VM de la cátedra los demás usuarios
+no pueden leerlo, y `ds` no puede apagar la VM. Por eso se lanza desde un
+usuario con sudo, envuelta en un `bash -c` que apaga al terminar:
 
 ```bash
-cd /home/ds/buckets/b1/wf635v2
-SEMILLAS=100213 BRAZOS=E0 bash brazos/correr_brazos.sh                 # prueba: una corrida
-APAGAR=1 nohup setsid bash brazos/correr_brazos.sh > /dev/null 2>&1 &  # la cola entera; apaga al final
+cd /tmp
+nohup setsid bash -c 'sudo -u ds -H bash /home/ds/buckets/b1/wf635v2/brazos/correr_brazos.sh; sudo poweroff' > ~/cola_brazos.log 2>&1 < /dev/null &
+```
+
+Para una sola corrida de prueba, sin apagar:
+
+```bash
+cd /tmp
+sudo -u ds -H env SEMILLAS=100213 BRAZOS=E0 bash /home/ds/buckets/b1/wf635v2/brazos/correr_brazos.sh
 ```
 
 Todo queda en `exp/brazos_v2/`:
@@ -74,6 +82,6 @@ Todo queda en `exp/brazos_v2/`:
 Para frenar al terminar la corrida en curso:
 `touch /home/ds/buckets/b1/exp/brazos_v2/PARAR`.
 
-Opcionales de la cola: `SEMILLAS="..."`, `BRAZOS="..."`, `REINTENTOS=1`,
-`APAGAR=1` (apaga la VM al terminar) y `BORRAR_CHECKPOINTS=1` (default: borra
-los `.fst` de `checkpoints/` de cada corrida terminada).
+Opcionales de la cola (con `sudo -u ds -H env VAR=... bash ...`):
+`SEMILLAS="..."`, `BRAZOS="..."`, `REINTENTOS=1` y `BORRAR_CHECKPOINTS=1`
+(default: borra los `.fst` de `checkpoints/` de cada corrida terminada).
