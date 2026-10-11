@@ -22,6 +22,17 @@
 #       - modelos finales: uno por semilla (ya lo hacia el z635)
 #       - Kaggle: una marca por archivo subido, no se resube
 #     Relanzar el mismo comando retoma desde lo ultimo guardado.
+#
+# v2 (todo opcional desde el .env; sin las variables nuevas corre como antes,
+# salvo la genetica, que ahora mide en otros meses y decide con un control):
+#   * la genetica busca en GA_VALIDA_BUSQUEDA y confirma en GA_VALIDA_CONTROL,
+#     meses que ni la BO ni el testing usan. La ganadora de cada ronda queda
+#     solo si le gana a GA_N_CONTROL formulas al azar de la misma gramatica
+#   * GA_MODO = genetica | azar | nada, para comparar brazos con las mismas
+#     semillas; GA_FORZAR=1 deja entrar las ganadoras igual (y registra el control)
+#   * HT_FIJO: un BO_log.txt de otra corrida, para no repetir la BO
+#   * FT_SEMILLAS_N, FT_UNDERSAMPLING: final train mas barato para comparar brazos
+#   * KAGGLE_SUBIR=0: el grupo A no sube nada
 # ===========================================================================
 
 format(Sys.time(), "%a %b %d %X %Y")
@@ -50,11 +61,14 @@ archivo_env <- if (length(args) >= 1) args[1] else ".env"
 if (!file.exists(archivo_env)) stop("No existe el archivo de configuracion ", archivo_env,
   " (copiar .env.example y completarlo)")
 readRenviron(archivo_env)
+# v2: una variable vacia en el .env (VAR=) vale lo mismo que no ponerla
+env_o <- function(variable, defecto) { v <- Sys.getenv(variable, ""); if (v == "") defecto else v }
 
 requeridas <- c("GRUPO", "EXPERIMENTO", "BUCKET_DIR", "DATASET_PATH",
   "MAIL_FROM", "MAIL_PASS_FILE", "MAIL_TO_FILE")
 GRUPO <- toupper(Sys.getenv("GRUPO"))
-if (GRUPO == "A") requeridas <- c(requeridas, "KAGGLE_JSON", "KAGGLE_COMPETENCIA")
+KAGGLE_SUBIR <- env_o("KAGGLE_SUBIR", "1") == "1"
+if (GRUPO == "A" && KAGGLE_SUBIR) requeridas <- c(requeridas, "KAGGLE_JSON", "KAGGLE_COMPETENCIA")
 faltan <- requeridas[Sys.getenv(requeridas) == ""]
 if (length(faltan)) stop("Faltan variables en ", archivo_env, ": ", paste(faltan, collapse= ", "))
 if (!(GRUPO %in% c("A", "B"))) stop("GRUPO tiene que ser A o B, no '", GRUPO, "'")
@@ -80,7 +94,15 @@ PARAM$dataset <- basename(Sys.getenv("DATASET_PATH"))
 #   set.seed(100213); sample(setdiff(primes::generate_primes(100000, 1000000), mias), 4)
 PARAM$FT$semillas <- c(100213, 100313, 100613, 100913, 101113,
                        570991, 669287, 832421, 882599)
+# v2: para comparar brazos alcanza con menos semillas y un final train con
+# undersampling de los CONTINUA (1 = todos, como siempre)
+PARAM$FT$semillas <- head(PARAM$FT$semillas,
+  as.integer(env_o("FT_SEMILLAS_N", length(PARAM$FT$semillas))))
 PARAM$FT$semillerio <- length(PARAM$FT$semillas)
+PARAM$FT$undersampling <- as.numeric(env_o("FT_UNDERSAMPLING", "1"))
+# v2: HT_FIJO = ruta a un BO_log.txt de otra corrida; se usa su mejor fila y no se corre la BO
+PARAM$BO$ht_fijo <- Sys.getenv("HT_FIJO", "")
+if (nzchar(PARAM$BO$ht_fijo) && !file.exists(PARAM$BO$ht_fijo)) stop("No existe HT_FIJO: ", PARAM$BO$ht_fijo)
 
 PARAM$mail$desde    <- Sys.getenv("MAIL_FROM")
 PARAM$mail$cada_iter <- as.integer(Sys.getenv("MAIL_CADA_ITER", "5"))
@@ -98,11 +120,18 @@ PARAM$FE_rf$run <- TRUE
 # --- FE genetico (consigna del FE intra-mes) --------------------------------
 # Por ronda, gramEvol evoluciona formulas  v1 op v2  o  (v1 op v2) op v3
 # sobre los campos del mes. Fitness: cuanta ganancia agrega la formula a un
-# LightGBM fijo, medida en el mes de validacion del grupo (nunca el de testing).
-# Corren TODAS las rondas. La mejor de cada ronda entra como columna gen_<ronda>
-# solo si mejora mas que 2 desvios del ruido entre semillas; si no, se descarta
-# y la ronda siguiente busca de nuevo con otra semilla.
-PARAM$GA$rondas        <- 3     # cuantas variables geneticas buscar como maximo
+# LightGBM fijo, medida en un mes de BUSQUEDA. Corren TODAS las rondas. La
+# mejor de cada ronda pasa por un CONTROL en otro mes que la busqueda no vio:
+# entra como columna gen_<ronda> solo si le gana a las GA_N_CONTROL formulas al
+# azar; si no, se descarta y la ronda siguiente busca de nuevo con otra semilla.
+#   GA_MODO=genetica  busca y controla (lo de siempre)
+#   GA_MODO=azar      una formula sorteada por ronda, sin busqueda: el brazo
+#                     de control para saber si la genetica le gana al azar
+#   GA_MODO=nada      sin FE genetico: el brazo base
+PARAM$GA$modo   <- env_o("GA_MODO", "genetica")
+if (!(PARAM$GA$modo %in% c("genetica", "azar", "nada"))) stop("GA_MODO tiene que ser genetica, azar o nada")
+PARAM$GA$forzar <- env_o("GA_FORZAR", "0") == "1"   # 1: entran aunque no pasen el control
+PARAM$GA$rondas        <- as.integer(env_o("GA_RONDAS", "3"))   # cuantas variables geneticas buscar como maximo
 PARAM$GA$poblacion     <- as.integer(Sys.getenv("GA_POBLACION", "30"))     # formulas por generacion
 PARAM$GA$generaciones  <- as.integer(Sys.getenv("GA_GENERACIONES", "20"))  # generaciones por ronda
 # GA_CON_HISTORIA=1: la genetica corre despues del FE historico; el fitness ve
@@ -115,16 +144,31 @@ PARAM$GA$horas_max     <- Inf   # sin tope: la genetica corre todas sus rondas y
                                 # generaciones. Con un numero, al llegar a esas horas
                                 # cierra la ronda con la mejor formula medida y sigue
                                 # sola con el resto del workflow
-PARAM$GA$desvios       <- 2     # la mejora tiene que superar desvios * ruido
+PARAM$GA$desvios       <- 2     # v2: solo informativo (queda en el registro)
 PARAM$GA$proteger_de_canaritos <- FALSE   # TRUE: canaritos no puede borrar las gen_*
-# meses del fitness: los mismos de la training strategy del z635 (celda 74),
-# todo hasta 202105 con el 20% de los CONTINUA, y se mide en 202107 (grupo A).
-# 202109 es el testing (Kaggle) y la genetica nunca lo ve.
-PARAM$GA$undersampling <- 0.2   # = PARAM$trainingstrategy$training_pct del z635
-PARAM$GA$entrena <- if (GRUPO == "A") c(201901:201912, 202001:202012, 202101:202105) else
-                                      c(201901:201912, 202001:202012, 202101:202103)
-PARAM$GA$valida  <- if (GRUPO == "A") c(202107) else c(202105)
-PARAM$GA$semillas_ruido <- PARAM$FT$semillas[1:3]
+# meses del fitness (v2). Antes se media en el mes de validacion de la BO
+# (A: 202107, B: 202105): la BO y la genetica elegian con el mismo mes y la
+# ganancia de validacion salia inflada a favor de las gen_*. Ahora:
+#   busqueda: donde gramEvol mide cada formula
+#   control:  donde se confirma la ganadora de la ronda (la busqueda no lo ve)
+# Cada mes se entrena con los GA_VENTANA meses anteriores, dejando uno de gap,
+# con el 20% de los CONTINUA. Nunca el mes de la BO ni el de testing.
+leer_meses <- function(variable, defecto) {
+  v <- Sys.getenv(variable, "")
+  if (v == "") defecto else as.integer(strsplit(v, ",")[[1]])
+}
+PARAM$GA$valida_busqueda <- leer_meses("GA_VALIDA_BUSQUEDA", if (GRUPO == "A") 202103 else 202101)
+PARAM$GA$valida_control  <- leer_meses("GA_VALIDA_CONTROL",  if (GRUPO == "A") 202105 else 202103)
+PARAM$GA$ventana       <- as.integer(env_o("GA_VENTANA", "6"))
+PARAM$GA$n_control     <- as.integer(env_o("GA_N_CONTROL", "19"))   # p = 1/(n+1) si la ganadora no vale nada
+prohibidos <- if (GRUPO == "A") c(202107, 202109) else c(202105, 202107)
+if (any(c(PARAM$GA$valida_busqueda, PARAM$GA$valida_control) %in% prohibidos))
+  stop("la genetica no puede medir en ", paste(prohibidos, collapse= " ni "),
+       " (validacion de la BO y testing del grupo ", GRUPO, ")")
+if (length(intersect(PARAM$GA$valida_busqueda, PARAM$GA$valida_control)))
+  stop("GA_VALIDA_BUSQUEDA y GA_VALIDA_CONTROL no pueden compartir meses")
+PARAM$GA$undersampling <- as.numeric(env_o("GA_UNDERSAMPLING", "0.2"))   # = training_pct del z635
+PARAM$GA$semillas_ruido <- c(100213, 100313, 100613)
 PARAM$GA$lgb_param <- list(
   objective= "binary",
   num_iterations= 200,
@@ -267,10 +311,23 @@ leer_checkpoint <- function(archivo) {
 
 # ===========================================================================
 # FE GENETICO
-#   genetica_log.txt     una fila por formula evaluada (es tambien el cache:
-#                        al retomar, gramEvol repite la misma secuencia con la
-#                        misma semilla y lo ya medido no se vuelve a entrenar)
-#   genetica_rondas.txt  una fila por ronda terminada: la mejor formula y si quedo
+#   genetica_log.txt      una fila por formula evaluada (es tambien el cache:
+#                         al retomar, gramEvol repite la misma secuencia con la
+#                         misma semilla y lo ya medido no se vuelve a entrenar)
+#   genetica_rondas.txt   una fila por ronda terminada: la mejor formula, su
+#                         control y si quedo
+#   genetica_control.txt  v2: el control de cada ronda, una fila por formula
+#
+# v2: la genetica mide en meses que ni la BO ni el testing usan.
+#   busqueda: gramEvol maximiza la mejora en PARAM$GA$valida_busqueda.
+#   control:  la ganadora de la ronda y PARAM$GA$n_control formulas al azar de
+#             la misma gramatica se miden en PARAM$GA$valida_control, que la
+#             busqueda no vio, con otra semilla de LightGBM. La ganadora queda
+#             solo si sale primera y mejora: si no aporta mas que una formula
+#             cualquiera, eso pasa con probabilidad 1/(n_control+1) (0,05 con 19).
+#   El umbral de 2 desvios del ruido entre semillas se sigue calculando y queda
+#   en el registro, pero ya no decide: compara el MAXIMO de cientos de formulas
+#   contra el ruido de UNA, y eso deja pasar ruido.
 # ===========================================================================
 if (!require("gramEvol")) install.packages("gramEvol")
 require("gramEvol")
@@ -279,23 +336,32 @@ require("lightgbm")
 
 ARCH_GA_LOG <- "genetica_log.txt"
 ARCH_GA_RONDAS <- "genetica_rondas.txt"
+ARCH_GA_CONTROL <- "genetica_control.txt"
 GA_PENALIDAD <- -1e12      # mejora de una formula que no se puede evaluar o es constante
+
+miles <- function(x) formatC(x, format= "d", big.mark= ".", decimal.mark= ",")
 
 ga_rondas <- function() {
   if (file.exists(ARCH_GA_RONDAS)) fread(ARCH_GA_RONDAS, sep= "\t") else
     data.table(ronda= integer(), nombre= character(), formula= character(),
-               mejora= numeric(), umbral= numeric(), aceptada= logical(), evaluaciones= integer())
+               mejora= numeric(), umbral= numeric(), mejora_control= numeric(),
+               puesto_control= integer(), p_control= numeric(),
+               aceptada= logical(), evaluaciones= integer())
 }
 ga_ganadoras <- function() { r <- ga_rondas(); r[aceptada == TRUE] }
 
 texto_ganadoras <- function() {
   r <- ga_rondas()
   if (!nrow(r)) return("Sin rondas geneticas.")
-  paste0("Rondas geneticas:\n",
-    paste(sprintf("  ronda %d: %s = %s\n    mejora %s (umbral %s) -> %s",
-      r$ronda, r$nombre, r$formula,
-      formatC(r$mejora, format= "d", big.mark= "."), formatC(r$umbral, format= "d", big.mark= "."),
-      ifelse(r$aceptada, "QUEDA", "descartada: no supera el ruido")), collapse= "\n"))
+  if (PARAM$GA$modo == "azar")
+    return(paste0("Rondas geneticas (modo azar: formulas sorteadas, sin busqueda):\n",
+      paste(sprintf("  ronda %d: %s = %s", r$ronda, r$nombre, r$formula), collapse= "\n")))
+  paste0("Rondas geneticas", if (PARAM$GA$forzar) " (forzadas: quedan aunque no pasen el control)", ":\n",
+    paste(sprintf("  ronda %d: %s = %s\n    busqueda: mejora %s (umbral de ruido %s)\n    control: mejora %s, puesto %s de %d (p = %s) -> %s",
+      r$ronda, r$nombre, r$formula, miles(r$mejora), miles(r$umbral),
+      miles(r$mejora_control), r$puesto_control, PARAM$GA$n_control + 1L,
+      formatC(r$p_control, format= "f", digits= 2),
+      ifelse(r$aceptada, "QUEDA", "descartada: no le gana a las formulas al azar")), collapse= "\n"))
 }
 
 # evalua una formula sobre una tabla: Inf -> NA y NaN -> 0, como la valvula del FE intra-mes
@@ -310,22 +376,34 @@ ga_evaluar_formula <- function(formula, tabla) {
 }
 
 # ganancia en meseta (como fganancia_lgbm_meseta de canaritos): promedio de las
-# 500 mejores ganancias acumuladas
-ga_ganancia_meseta <- function(prob) {
-  gan_acum <- cumsum(GA$gan_valid[order(-prob)])
+# 500 mejores ganancias acumuladas del mes de validacion de la muestra s
+ga_ganancia_meseta <- function(prob, s) {
+  gan_acum <- cumsum(s$gan_valid[order(-prob)])
   mean(sort(gan_acum, decreasing= TRUE)[1:min(500, length(gan_acum))])
 }
 
-ga_entrenar <- function(X, semilla) {
-  dtr <- lgb.Dataset(X[!GA$es_valid, , drop= FALSE], label= GA$label[!GA$es_valid], free_raw_data= TRUE)
+ga_entrenar <- function(X, semilla, s) {
+  dtr <- lgb.Dataset(X[!s$es_valid, , drop= FALSE], label= s$label[!s$es_valid], free_raw_data= TRUE)
   p <- PARAM$GA$lgb_param
   p$seed <- semilla
   m <- lgb.train(data= dtr, params= p, verbose= -100)
-  ga_ganancia_meseta(predict(m, X[GA$es_valid, , drop= FALSE]))
+  ga_ganancia_meseta(predict(m, X[s$es_valid, , drop= FALSE]), s)
 }
 
-# filas de referencia del log (no son formulas): la base de cada ronda y el ruido
-es_referencia <- function(formula) formula == "BASE" | startsWith(formula, "RUIDO_")
+# ganancia promedio sobre una lista de muestras: la base (formula NULL) o la
+# base + las columnas de la formula. NA si la formula no se puede evaluar
+ga_ganancia <- function(muestras, formula, semilla) {
+  mean(sapply(muestras, function(s) {
+    if (is.null(formula)) return(ga_entrenar(s$X, semilla, s))
+    cols <- ga_columnas_candidato(formula, s)
+    if (is.null(cols)) return(NA_real_)
+    ga_entrenar(cbind(s$X, cols), semilla, s)
+  }))
+}
+
+# filas de referencia del log (no son formulas de la busqueda): la base de
+# cada ronda, el ruido y el control
+es_referencia <- function(formula) formula == "BASE" | startsWith(formula, "RUIDO_") | startsWith(formula, "CONTROL_")
 
 ga_registrar <- function(ronda, formula, ganancia, mejora, segundos) {
   fwrite(data.table(ronda= ronda, formula= formula, ganancia= ganancia, mejora= mejora,
@@ -352,22 +430,83 @@ ga_derivadas <- function(v) {
   list(lag1= l1, lag2= l2, delta1= v - l1, delta2= v - l2)
 }
 
-# las columnas que una formula agrega a la muestra del fitness
-ga_columnas_candidato <- function(formula) {
+# las columnas que una formula agrega a la muestra s
+ga_columnas_candidato <- function(formula, s) {
   if (!PARAM$GA$con_historia) {
-    v <- ga_evaluar_formula(formula, GA$datos)
+    v <- ga_evaluar_formula(formula, s$datos)
     if (is.null(v)) return(NULL)
     return(cbind(gen= v))
   }
   v <- ga_evaluar_formula(formula, dataset)
   if (is.null(v)) return(NULL)
   d <- ga_derivadas(v)
-  f <- GA$filas
+  f <- s$filas
   cbind(gen= v[f], gen_lag1= d$lag1[f], gen_lag2= d$lag2[f],
         gen_delta1= d$delta1[f], gen_delta2= d$delta2[f])
 }
 
-# la funcion de costo de gramEvol (minimiza): -(mejora en ganancia)
+# los meses de entrenamiento de un mes de validacion: PARAM$GA$ventana meses
+# que terminan dos antes (un mes de gap, como entre training y validate)
+GA_MESES <- c(201901:201912, 202001:202012, 202101:202112)
+ga_ventana <- function(mes) {
+  i <- match(mes, GA_MESES)
+  GA_MESES[max(1, i - 1 - PARAM$GA$ventana):(i - 2)]
+}
+
+# una muestra del fitness: la ventana con el PARAM$GA$undersampling de los
+# CONTINUA, mas el mes de validacion completo
+ga_muestra <- function(mes, campos_modelo) {
+  s <- new.env()
+  set.seed(PARAM$semilla_primigenia + mes, kind = "L'Ecuyer-CMRG")
+  azar <- runif(nrow(dataset))
+  positivos <- c("BAJA+1", "BAJA+2")
+  filas <- (dataset$foto_mes %in% ga_ventana(mes) &
+             (dataset$clase_ternaria %in% positivos | azar < PARAM$GA$undersampling)) |
+           dataset$foto_mes == mes
+  s$mes <- mes
+  s$filas <- which(filas)
+  s$datos <- dataset[filas]
+  s$es_valid <- s$datos$foto_mes == mes
+  s$label <- as.integer(s$datos$clase_ternaria %in% positivos)
+  s$gan_valid <- ifelse(s$datos$clase_ternaria[s$es_valid] == "BAJA+2",
+                        PARAM$ganancia$acierto, PARAM$ganancia$error)
+  s$X <- data.matrix(s$datos[, campos_modelo, with= FALSE])
+  loguear("genetica: muestra de", mes, "- entrena", paste(range(ga_ventana(mes)), collapse= "-"),
+          "con", sum(!s$es_valid), "filas, valida con", sum(s$es_valid))
+  s
+}
+
+# una ganadora entra a todas las muestras: la busqueda de la ronda siguiente
+# y el control parten de lo que ya quedo
+ga_agregar_a_muestras <- function(nombre, formula) {
+  for (s in c(GA$busqueda, GA$control)) {
+    cols <- ga_columnas_candidato(formula, s)
+    colnames(cols) <- sub("^gen", nombre, colnames(cols))
+    s$X <- cbind(s$X, cols)
+  }
+}
+
+# formulas al azar de la misma gramatica que gramEvol (mitad de 2 campos,
+# mitad de 3), distintas y no constantes en la muestra s. Usa su propia
+# semilla y deja el RNG de R como estaba
+ga_formulas_azar <- function(n, vars, semilla, s) {
+  rng <- if (exists(".Random.seed", envir= globalenv())) get(".Random.seed", envir= globalenv())
+  set.seed(semilla, kind = "L'Ecuyer-CMRG")
+  ops <- c(" + ", " - ", " * ", " / ")
+  f <- character(0)
+  intentos <- 0
+  while (length(f) < n && intentos < 100 * n) {
+    intentos <- intentos + 1
+    v <- sample(vars, 3, replace= TRUE)
+    o <- sample(ops, 2, replace= TRUE)
+    cand <- if (runif(1) < 0.5) paste0(v[1], o[1], v[2]) else paste0("(", v[1], o[1], v[2], ")", o[2], v[3])
+    if (!(cand %in% f) && !is.null(ga_evaluar_formula(cand, s$datos))) f <- c(f, cand)
+  }
+  if (!is.null(rng)) assign(".Random.seed", rng, envir= globalenv())
+  f
+}
+
+# la funcion de costo de gramEvol (minimiza): -(mejora en ganancia en la busqueda)
 ga_costo <- function(expr) {
   formula <- as.character(expr)
   clave <- paste(GA$ronda, formula)
@@ -380,14 +519,8 @@ ga_costo <- function(expr) {
   # el cache gramEvol seguiria otro camino
   rng <- get(".Random.seed", envir= globalenv())
   t0 <- Sys.time()
-  cols <- ga_columnas_candidato(formula)
-  if (is.null(cols)) {
-    ganancia <- NA_real_
-    mejora <- GA_PENALIDAD
-  } else {
-    ganancia <- ga_entrenar(cbind(GA$X, cols), PARAM$semilla_primigenia)
-    mejora <- ganancia - GA$base
-  }
+  ganancia <- ga_ganancia(GA$busqueda, formula, PARAM$semilla_primigenia)
+  mejora <- if (is.na(ganancia)) GA_PENALIDAD else ganancia - GA$base
   assign(".Random.seed", rng, envir= globalenv())
   ga_registrar(GA$ronda, formula, ganancia, mejora, as.numeric(difftime(Sys.time(), t0, units= "secs")))
   -mejora
@@ -396,7 +529,7 @@ ga_costo <- function(expr) {
 ga_monitor <- function(resultado) {
   gen <- tryCatch(resultado$population$currentIteration, error= function(e) NA)
   loguear("genetica ronda", GA$ronda, "generacion", gen,
-          "mejor mejora", formatC(-min(resultado$best$cost), format= "d", big.mark= "."))
+          "mejor mejora", miles(-min(resultado$best$cost)))
   if (is.na(gen) || PARAM$GA$mail_cada_gen <= 0 || gen %% PARAM$GA$mail_cada_gen != 0) return(invisible())
   log_ga <- fread(ARCH_GA_LOG, sep= "\t")[ronda == GA$ronda & !es_referencia(formula)]
   top <- head(log_ga[order(-mejora)], 10)
@@ -404,14 +537,16 @@ ga_monitor <- function(resultado) {
     paste0("Formulas evaluadas en la ronda: ", nrow(log_ga),
            sprintf(" (%.0f s promedio cada una)", mean(log_ga$segundos[log_ga$segundos > 0])), "\n",
            sprintf("Horas usadas: %.1f de %g\n", GA$horas + GA$horas_sesion(), PARAM$GA$horas_max),
-           "Ganancia base de la ronda: ", formatC(GA$base, format= "d", big.mark= "."),
-           ", umbral para quedar: ", formatC(GA$umbral, format= "d", big.mark= "."), "\n\n",
-           "Las 10 mejores hasta ahora:\n",
+           "Ganancia base de la ronda: ", miles(GA$base),
+           ", umbral de ruido (informativo): ", miles(GA$umbral), "\n",
+           "Al final de la ronda la mejor pasa por el control en ",
+           paste(PARAM$GA$valida_control, collapse= ", "), "\n\n",
+           "Las 10 mejores hasta ahora (en la busqueda):\n",
            paste(sprintf("  %s  %s", formatC(top$mejora, format= "d", big.mark= ".", width= 14), top$formula),
                  collapse= "\n")))
 }
 
-# valor de una formula ya medida o por medir sin gramEvol (base y ruido)
+# valor de una formula ya medida o por medir sin gramEvol (base, ruido y control)
 ga_medir <- function(clave, expr_fn) {
   if (!is.null(GA$cache[[clave]])) return(GA$cache[[clave]])
   t0 <- Sys.time()
@@ -419,6 +554,28 @@ ga_medir <- function(clave, expr_fn) {
   ga_registrar(as.integer(sub(" .*", "", clave)), sub("^[^ ]+ ", "", clave), g, NA_real_,
                as.numeric(difftime(Sys.time(), t0, units= "secs")))
   g
+}
+
+# CONTROL de una ronda: la ganadora de la busqueda contra n_control formulas al
+# azar, todas medidas en los meses de control con otra semilla de LightGBM.
+# Si la busqueda no encontro nada mejor que el azar, la ganadora queda primera
+# con probabilidad 1/(n_control+1)
+ga_control <- function(r, formula, vars) {
+  semilla <- PARAM$semilla_primigenia + 1
+  base <- ga_medir(paste0(r, " CONTROL_BASE"), function() ga_ganancia(GA$control, NULL, semilla))
+  azar <- ga_formulas_azar(PARAM$GA$n_control, vars, PARAM$semilla_primigenia + 2000 * r, GA$control[[1]])
+  medir <- function(tipo, f) ga_medir(paste(r, paste0("CONTROL_", tipo), f),
+                                      function() ga_ganancia(GA$control, f, semilla)) - base
+  m_ga <- medir("GA", formula)
+  m_azar <- sapply(azar, function(f) medir("AZAR", f))
+  fwrite(data.table(ronda= r, tipo= c("GA", rep("AZAR", length(azar))),
+                    formula= c(formula, azar), mejora= c(m_ga, m_azar)),
+         ARCH_GA_CONTROL, sep= "\t", append= file.exists(ARCH_GA_CONTROL))
+  puesto <- if (is.na(m_ga)) NA_integer_ else 1L + sum(m_azar >= m_ga, na.rm= TRUE)
+  loguear("genetica: control de la ronda", r, "- mejora", miles(m_ga), "puesto", puesto,
+          "de", length(azar) + 1, "(mediana de las al azar", miles(median(m_azar, na.rm= TRUE)), ")")
+  list(mejora= m_ga, puesto= puesto, p= puesto / (length(azar) + 1),
+       pasa= isTRUE(puesto == 1L && m_ga > 0))
 }
 
 GA <- new.env()
@@ -432,27 +589,19 @@ correr_genetica <- function() {
     loguear("genetica: ya hay", nrow(l), "formulas medidas")
   }
 
-  # muestra para el fitness: meses de entrenamiento con undersampling + validacion completa
-  set.seed(PARAM$semilla_primigenia, kind = "L'Ecuyer-CMRG")
-  azar <- runif(nrow(dataset))
-  positivos <- c("BAJA+1", "BAJA+2")
-  filas <- (dataset$foto_mes %in% PARAM$GA$entrena &
-             (dataset$clase_ternaria %in% positivos | azar < PARAM$GA$undersampling)) |
-           dataset$foto_mes %in% PARAM$GA$valida
+  # con historia, el orden tiene que estar ANTES de elegir las filas de las muestras
   if (PARAM$GA$con_historia) setorder(dataset, numero_de_cliente, foto_mes)
-  GA$filas <- which(filas)
-  GA$datos <- dataset[filas]
-  GA$es_valid <- GA$datos$foto_mes %in% PARAM$GA$valida
-  GA$label <- as.integer(GA$datos$clase_ternaria %in% positivos)
-  GA$gan_valid <- ifelse(GA$datos$clase_ternaria[GA$es_valid] == "BAJA+2",
-                         PARAM$ganancia$acierto, PARAM$ganancia$error)
-  numericas <- names(GA$datos)[sapply(GA$datos, is.numeric)]
+  numericas <- names(dataset)[sapply(dataset, is.numeric)]
   campos_modelo <- setdiff(numericas, "numero_de_cliente")
   vars <- setdiff(numericas, c("numero_de_cliente", "foto_mes"))
   # con historia, se combinan solo los campos del mes (no los lags ni tendencias)
   if (PARAM$GA$con_historia) vars <- intersect(GA_CAMPOS_MES, vars)
-  GA$X <- data.matrix(GA$datos[, campos_modelo, with= FALSE])
-  loguear("genetica: muestra de", nrow(GA$datos), "filas,", length(vars), "campos para combinar")
+
+  # muestras del fitness: la de busqueda solo hace falta si hay genetica
+  GA$busqueda <- if (PARAM$GA$modo == "genetica") lapply(PARAM$GA$valida_busqueda, ga_muestra, campos_modelo) else list()
+  GA$control  <- lapply(PARAM$GA$valida_control, ga_muestra, campos_modelo)
+  loguear("genetica: modo", PARAM$GA$modo, if (PARAM$GA$forzar) "(forzada)" else "",
+          "-", length(vars), "campos para combinar")
 
   gramatica <- CreateGrammar(list(
     expr = gsrule("<var><op><var>", "(<var><op><var>)<op><var>"),
@@ -460,13 +609,16 @@ correr_genetica <- function() {
     var  = do.call(gsrule, as.list(vars))
   ))
 
-  # ruido: la misma base con distintas semillas
-  ganancias_ruido <- sapply(PARAM$GA$semillas_ruido, function(s)
-    ga_medir(paste0("0 RUIDO_semilla_", s), function() ga_entrenar(GA$X, s)))
-  ruido <- sd(ganancias_ruido)
-  GA$umbral <- PARAM$GA$desvios * ruido
-  PARAM$GA$ruido <<- ruido
-  loguear("genetica: ruido entre semillas", round(ruido), "-> umbral", round(GA$umbral))
+  # ruido: la misma base con distintas semillas. Desde la v2 es informativo
+  GA$umbral <- NA_real_
+  if (PARAM$GA$modo == "genetica") {
+    ganancias_ruido <- sapply(PARAM$GA$semillas_ruido, function(s)
+      ga_medir(paste0("0 RUIDO_semilla_", s), function() ga_ganancia(GA$busqueda, NULL, s)))
+    ruido <- sd(ganancias_ruido)
+    GA$umbral <- PARAM$GA$desvios * ruido
+    PARAM$GA$ruido <<- ruido
+    loguear("genetica: ruido entre semillas", round(ruido), "-> umbral (informativo)", round(GA$umbral))
+  }
 
   GA$horas <- ga_horas_usadas()
   t_sesion <- Sys.time()
@@ -476,12 +628,20 @@ correr_genetica <- function() {
   hechas <- ga_rondas()
   for (r in seq_len(PARAM$GA$rondas)) {
     GA$ronda <- r
-    GA$base <- ga_medir(paste0(r, " BASE"), function() ga_entrenar(GA$X, PARAM$semilla_primigenia))
 
     if (r %in% hechas$ronda) {
       fila <- hechas[ronda == r]
       loguear("genetica: ronda", r, "ya hecha:", fila$formula, if (fila$aceptada) "(queda)" else "(descartada)")
+    } else if (PARAM$GA$modo == "azar") {
+      # brazo de control del experimento: una formula sorteada por ronda, que
+      # queda siempre. Mismo sorteo que las del control, con otra semilla
+      fila <- data.table(ronda= r, nombre= sprintf("gen_%02d", r),
+        formula= ga_formulas_azar(1, vars, PARAM$semilla_primigenia + 1000 * r, GA$control[[1]]),
+        mejora= NA_real_, umbral= NA_real_, mejora_control= NA_real_, puesto_control= NA_integer_,
+        p_control= NA_real_, aceptada= TRUE, evaluaciones= 0L)
+      fwrite(fila, ARCH_GA_RONDAS, sep= "\t", append= file.exists(ARCH_GA_RONDAS))
     } else {
+      GA$base <- ga_medir(paste0(r, " BASE"), function() ga_ganancia(GA$busqueda, NULL, PARAM$semilla_primigenia))
       set.seed(PARAM$semilla_primigenia + r, kind = "L'Ecuyer-CMRG")
       corto <- FALSE
       ge <- tryCatch(
@@ -500,8 +660,10 @@ correr_genetica <- function() {
         mejor <- as.character(ge$best$expressions)
         mejora <- -ge$best$cost
       }
+      ctl <- ga_control(r, mejor, vars)
       fila <- data.table(ronda= r, nombre= sprintf("gen_%02d", r), formula= mejor,
-        mejora= mejora, umbral= GA$umbral, aceptada= mejora > GA$umbral,
+        mejora= mejora, umbral= GA$umbral, mejora_control= ctl$mejora,
+        puesto_control= ctl$puesto, p_control= ctl$p, aceptada= PARAM$GA$forzar || ctl$pasa,
         evaluaciones= nrow(fread(ARCH_GA_LOG, sep= "\t")[ronda == r & !es_referencia(formula)]))
       fwrite(fila, ARCH_GA_RONDAS, sep= "\t", append= file.exists(ARCH_GA_RONDAS))
       mandar_mail(sprintf("genetica ronda %d terminada%s", r, if (corto) " (tope de horas)" else ""),
@@ -509,11 +671,9 @@ correr_genetica <- function() {
     }
 
     if (fila$aceptada) {
-      cols <- ga_columnas_candidato(fila$formula)
-      colnames(cols) <- sub("^gen", fila$nombre, colnames(cols))
-      GA$X <- cbind(GA$X, cols)
+      ga_agregar_a_muestras(fila$nombre, fila$formula)
     } else {
-      loguear("genetica: la ronda", r, "no supero el ruido: se descarta y sigue la ronda", r + 1)
+      loguear("genetica: la ronda", r, "no paso el control: se descarta y sigue la ronda", r + 1)
     }
     if (ga_horas_usadas() >= PARAM$GA$horas_max) {
       loguear("genetica: tope de horas, no se abren mas rondas"); break
@@ -543,7 +703,7 @@ correr_genetica <- function() {
     loguear("genetica: agregada", g$nombre, "=", g$formula)
   }
   PARAM$GA$ganadoras <<- ga_ganadoras()
-  rm(list= c("datos", "X"), envir= GA)
+  rm(list= c("busqueda", "control"), envir= GA)
   gc(verbose= FALSE)
 }
 
@@ -575,7 +735,7 @@ preparar_kaggle <- function(avisar) {
            ") o el CLI no responde. La corrida sigue; al final los archivos quedan en ",
            carpeta_exp, "/kaggle y no se suben."))
 }
-if (GRUPO == "A") preparar_kaggle(avisar= TRUE)
+if (GRUPO == "A" && KAGGLE_SUBIR) preparar_kaggle(avisar= TRUE)
 
 CK_HIST <- "checkpoints/dataset_fe_historico.fst"
 CK_CANARITOS <- "checkpoints/dataset_canaritos.fst"
@@ -585,6 +745,11 @@ mandar_mail("arranco",
          "Version del script: ", WF_VERSION, "\n",
          "Carpeta: ", carpeta_exp, "\n",
          "Semillas: ", paste(PARAM$FT$semillas, collapse= ", "), "\n",
+         "Genetica: modo ", PARAM$GA$modo, if (PARAM$GA$forzar) " (forzada)" else "",
+         ", busqueda en ", paste(PARAM$GA$valida_busqueda, collapse= ","),
+         ", control en ", paste(PARAM$GA$valida_control, collapse= ","), "\n",
+         if (nzchar(PARAM$BO$ht_fijo)) paste0("HT fijo: ", PARAM$BO$ht_fijo, "\n"),
+         "Final train: undersampling ", PARAM$FT$undersampling, " de los CONTINUA\n",
          "Checkpoints existentes: ",
          paste(c(if (file.exists(CK_HIST)) "FE historico", if (file.exists(CK_CANARITOS)) "canaritos",
                  if (file.exists("HT.RDATA")) "BO (HT.RDATA)", if (file.exists("BO_log.txt")) "BO terminada"),
@@ -1289,7 +1454,7 @@ AgregarVariables_IntraMes(dataset)
     GA_CAMPOS_MES <- setdiff(names(dataset)[sapply(dataset, is.numeric)],
                              c("numero_de_cliente", "foto_mes"))
 
-    if (!PARAM$GA$con_historia) {
+    if (PARAM$GA$modo != "nada" && !PARAM$GA$con_historia) {
       etapa("FE genetico")
       correr_genetica()
       fin_etapa(texto_ganadoras())
@@ -1515,7 +1680,7 @@ if( PARAM$FE_hist$Tendencias$run) {
 
     fin_etapa()
 
-    if (PARAM$GA$con_historia) {
+    if (PARAM$GA$modo != "nada" && PARAM$GA$con_historia) {
       etapa("FE genetico")
       correr_genetica()
       fin_etapa(texto_ganadoras())
@@ -2139,6 +2304,12 @@ correr_bayesiana <- function() {
   mbo(obj.fun, design= diseno, learner= surr.km, control= ctrl)
 }
 
+# v2: con HT_FIJO no se corre la BO; se usa la mejor fila de ese BO_log.txt
+if (nzchar(PARAM$BO$ht_fijo) && !file.exists("BO_log.txt")) {
+  loguear("HT fijo: copio", PARAM$BO$ht_fijo, "y no corro la BO")
+  file.copy(PARAM$BO$ht_fijo, "BO_log.txt")
+}
+
 if (!file.exists("BO_log.txt")) {
   bayesiana_salida <- correr_bayesiana()
 # --- z635 celda 94 ---
@@ -2250,7 +2421,11 @@ loguear("modelos finales: faltan", length(faltan_modelos), "de", length(PARAM$FT
 
 if (length(faltan_modelos)) {
   # reemplaza la celda 98: los meses de final_train ya los fijo el grupo
-  dataset[, fold_final_train := foto_mes %in% PARAM$trainingstrategy$final_train ]
+  # v2: FT_UNDERSAMPLING < 1 deja todas las BAJA y esa fraccion de los CONTINUA
+  dataset[, fold_final_train := foto_mes %in% PARAM$trainingstrategy$final_train &
+    (clase_ternaria %in% PARAM$trainingstrategy$positivos | azar < PARAM$FT$undersampling) ]
+  loguear("final train:", dataset[fold_final_train == TRUE, .N], "filas (undersampling",
+          PARAM$FT$undersampling, "de los CONTINUA)")
 
   dfinal_train <- lgb.Dataset(
     data= data.matrix(dataset[fold_final_train == TRUE, campos_buenos, with= FALSE]),
@@ -2332,7 +2507,7 @@ if (GRUPO == "A") {
   etapa("kaggle")
   # kaggle.json y el CLI se prepararon al arrancar; si no andaban, se reintenta
   # (el kaggle.json pudo haberse subido al bucket durante la corrida)
-  if (!KAGGLE_OK) preparar_kaggle(avisar= FALSE)
+  if (!KAGGLE_OK && KAGGLE_SUBIR) preparar_kaggle(avisar= FALSE)
   PARAM$kaggle$competencia <- Sys.getenv("KAGGLE_COMPETENCIA")
 
   setorder(tb_prediccion, -prob)
@@ -2403,11 +2578,17 @@ if (GRUPO == "A") {
   tb_ganancia <- rbind(tb_ganancia,
     data.table(envios= envios_max, ganancia= tb_prediccion$ganancia_acum[envios_max]))
   fwrite(tb_ganancia, "ganancia_202107.txt", sep= "\t")
+  # v2: la metrica para comparar corridas es el promedio de los cortes fijos
+  # (la meseta): el maximo de la curva se elige mirando la respuesta
+  meseta <- mean(tb_ganancia$ganancia[seq_along(PARAM$kaggle$cortes)])
+  writeLines(format(round(meseta), scientific= FALSE), "ganancia_meseta.txt")
 
   resumen <- paste0("Ganancia en 202107 por cantidad de envios:\n",
     paste(sprintf("%6d  %s", tb_ganancia$envios,
       formatC(tb_ganancia$ganancia, format= "d", big.mark= ".")), collapse= "\n"),
-    "\n(la ultima fila es el maximo de la curva, que no se conoce de antemano)")
+    "\n(la ultima fila es el maximo de la curva, que no se conoce de antemano)\n",
+    "Promedio de los ", length(PARAM$kaggle$cortes), " cortes (meseta, para comparar corridas): ",
+    formatC(meseta, format= "d", big.mark= "."))
   fin_etapa(resumen)
 }
 
@@ -2431,14 +2612,16 @@ ruido_genetica <- function() {
 
 texto_registro_genetica <- function() {
   g <- ga_ganadoras()
-  if (!nrow(g)) return(paste0(texto_ganadoras(), "\nNinguna variable genetica supero el ruido."))
+  if (PARAM$GA$modo == "nada") return("Sin FE genetico (GA_MODO=nada).")
+  if (!nrow(g)) return(paste0(texto_ganadoras(), "\nNinguna variable genetica paso el control."))
   impo <- if (file.exists("impo.txt")) fread("impo.txt") else data.table(Feature= character())
   lineas <- sapply(seq_len(nrow(g)), function(i) {
     n <- g$nombre[i]
     derivadas <- grep(paste0("^", n, "(_|$)"), colnames(dataset), value= TRUE)
     puestos <- match(derivadas, impo$Feature)
     paste0("  ", n, " = ", g$formula[i], "\n",
-      "    mejora en el fitness: ", formatC(g$mejora[i], format= "d", big.mark= "."), "\n",
+      "    mejora en la busqueda: ", miles(g$mejora[i]),
+      ", en el control: ", miles(g$mejora_control[i]), "\n",
       "    sobrevive a canaritos: ", if (n %in% colnames(dataset)) "si" else "no",
       " (columnas derivadas que quedan: ", if (length(derivadas)) paste(derivadas, collapse= ", ") else "ninguna", ")\n",
       "    puesto en la importancia del modelo final (de ", nrow(impo), "): ",
