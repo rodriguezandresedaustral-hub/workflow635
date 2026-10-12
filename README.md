@@ -21,8 +21,8 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
   - `gramEvol` evoluciona fórmulas `v1 op v2` o `(v1 op v2) op v3` sobre los
     campos del mes, con `+ − × /`.
   - **Fitness:** cuánta ganancia agrega la fórmula a un LightGBM fijo, medida
-    en un **mes de búsqueda** que ni la BO ni el testing usan (A: 202103,
-    B: 202101), entrenando con todos los meses desde 201901 hasta 1 de gap
+    en un **mes de búsqueda** (A: 202107, el mes con clase más cercano a
+    Kaggle; B: 202101), entrenando con todos los meses desde 201901 hasta 1 de gap
     (o solo los `GA_VENTANA` anteriores) y el 20% de los CONTINUA. Ver [La genética v2](#la-genética-v2).
   - Por ronda, la mejor fórmula pasa por un **control** en otro mes que la
     búsqueda no vio (A: 202105, B: 202103): se mide junto a 19 fórmulas al
@@ -88,10 +88,16 @@ La v2 mide en otros meses y decide con un control contra el azar:
 
 | Grupo | Búsqueda (gramEvol) | Control | Nunca |
 |---|---|---|---|
-| A | 202103 | 202105 | 202107, 202109 |
+| A | 202107 | 202105 | 202109 |
 | B | 202101 | 202103 | 202105, 202107 |
 
 El script corta con error si se le pide medir en un mes prohibido.
+
+**Grupo A busca en 202107.** Es el mes con clase más cercano al testing
+(202109, Kaggle). Que la BO también valide en 202107 puede inflar la ganancia
+de validación de la BO, pero no el puntaje de Kaggle, que ni la genética ni la
+BO ven. Correr la búsqueda en 202103 la alejaba 6 meses del mes que se predice.
+Para volver al esquema anterior: `GA_VALIDA_BUSQUEDA=202103`.
 
 **Prueba con datos sintéticos** (una variable con señal plantada, `v1 / v2`,
 y el resto ruido puro; control de 5 fórmulas al azar para que fuera rápido).

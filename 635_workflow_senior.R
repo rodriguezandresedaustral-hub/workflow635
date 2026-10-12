@@ -26,7 +26,7 @@
 # v2 (todo opcional desde el .env; sin las variables nuevas corre como antes,
 # salvo la genetica, que ahora mide en otros meses y decide con un control):
 #   * la genetica busca en GA_VALIDA_BUSQUEDA y confirma en GA_VALIDA_CONTROL,
-#     meses que ni la BO ni el testing usan, entrenando con todos los meses
+#     nunca el de testing (A busca en 202107, B en 202101), entrenando con todos los meses
 #     anteriores (o los GA_VENTANA anteriores). La ganadora de cada ronda queda
 #     solo si le gana a GA_N_CONTROL formulas al azar de la misma gramatica
 #   * GA_MODO = genetica | azar | nada, para comparar brazos con las mismas
@@ -154,19 +154,23 @@ PARAM$GA$proteger_de_canaritos <- FALSE   # TRUE: canaritos no puede borrar las 
 #   control:  donde se confirma la ganadora de la ronda (la busqueda no lo ve)
 # Cada mes se entrena con todos los meses desde 201901 hasta dos antes (uno de
 # gap, como la v1), o solo con los GA_VENTANA anteriores si se pide, y con el
-# 20% de los CONTINUA. Nunca el mes de la BO ni el de testing.
+# 20% de los CONTINUA. Nunca el mes de testing.
+# Grupo A: busca en 202107, el mes con clase mas cercano al testing (202109,
+# Kaggle), igual que la v1. 202107 es tambien el validate de la BO, pero no es
+# el testing: elegir ahi puede inflar la ganancia de validacion de la BO, no
+# el puntaje de Kaggle. El control queda en 202105.
 leer_meses <- function(variable, defecto) {
   v <- Sys.getenv(variable, "")
   if (v == "") defecto else as.integer(strsplit(v, ",")[[1]])
 }
-PARAM$GA$valida_busqueda <- leer_meses("GA_VALIDA_BUSQUEDA", if (GRUPO == "A") 202103 else 202101)
+PARAM$GA$valida_busqueda <- leer_meses("GA_VALIDA_BUSQUEDA", if (GRUPO == "A") 202107 else 202101)
 PARAM$GA$valida_control  <- leer_meses("GA_VALIDA_CONTROL",  if (GRUPO == "A") 202105 else 202103)
 PARAM$GA$ventana       <- as.integer(env_o("GA_VENTANA", "0"))    # 0 = todos los meses
 PARAM$GA$n_control     <- as.integer(env_o("GA_N_CONTROL", "19"))   # p = 1/(n+1) si la ganadora no vale nada
-prohibidos <- if (GRUPO == "A") c(202107, 202109) else c(202105, 202107)
+prohibidos <- if (GRUPO == "A") c(202109) else c(202105, 202107)
 if (any(c(PARAM$GA$valida_busqueda, PARAM$GA$valida_control) %in% prohibidos))
   stop("la genetica no puede medir en ", paste(prohibidos, collapse= " ni "),
-       " (validacion de la BO y testing del grupo ", GRUPO, ")")
+       " (grupo ", GRUPO, ")")
 if (length(intersect(PARAM$GA$valida_busqueda, PARAM$GA$valida_control)))
   stop("GA_VALIDA_BUSQUEDA y GA_VALIDA_CONTROL no pueden compartir meses")
 PARAM$GA$undersampling <- as.numeric(env_o("GA_UNDERSAMPLING", "0.2"))   # = training_pct del z635
