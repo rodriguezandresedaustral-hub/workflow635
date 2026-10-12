@@ -1,6 +1,7 @@
 # ===========================================================================
 # Compara los brazos del workflow635 v2 (grupo B: ganancia real en 202107)
-#   E0 (WF9900) sin genetica, E1 (WF9901) genetica v2, E2 (WF9902) formulas al azar
+#   E0 (WF9900) sin genetica, E1 (WF9901) genetica v2 con 6 meses de fitness,
+#   E2 (WF9902) formulas al azar, E3 (WF9903) genetica v2 con todos los meses
 # Pareado por semilla del pipeline. Metrica: ganancia_meseta.txt, el promedio
 # de la ganancia en los cortes fijos de 8.000 a 12.000 envios.
 #
@@ -13,10 +14,10 @@ args <- commandArgs(trailingOnly= TRUE)
 EXP <- if (length(args)) args[1] else "/home/ds/buckets/b1/exp"
 SALIDA <- file.path(EXP, "brazos_v2")
 dir.create(SALIDA, showWarnings= FALSE)
-BRAZOS <- c(E0= 9900L, E1= 9901L, E2= 9902L)
+BRAZOS <- c(E0= 9900L, E1= 9901L, E2= 9902L, E3= 9903L)
 
 millones <- function(x) formatC(x / 1e6, format= "f", digits= 2, decimal.mark= ",", big.mark= ".")
-miles <- function(x) formatC(round(x), format= "d", big.mark= ".")
+miles <- function(x) formatC(round(x), format= "d", big.mark= ".", decimal.mark= ",")
 p2 <- function(x) formatC(x, format= "f", digits= 3, decimal.mark= ",")
 
 # --- corridas terminadas ----------------------------------------------------
@@ -66,13 +67,14 @@ comparar <- function(a, b) {
   if (n < 2) return(data.table(comparacion= paste(a, "-", b), n= n))
   set.seed(1)
   boot <- replicate(20000, mean(sample(x, replace= TRUE)))
-  # Wilcoxon exacto: con 6 semillas el p mas chico posible es 2/64 = 0,031
+  # Wilcoxon exacto: con n semillas el p mas chico posible es 2/2^n (6: 0,031; 10: 0,002)
   p <- tryCatch(suppressWarnings(wilcox.test(x, exact= n <= 25)$p.value), error= function(e) NA_real_)
   data.table(comparacion= paste(a, "-", b), n= n,
     media= mean(x), mediana= median(x), gana= sum(x > 0),
     ic_inf= quantile(boot, 0.025), ic_sup= quantile(boot, 0.975), p_wilcoxon= p)
 }
-tb <- rbindlist(list(comparar("E1", "E0"), comparar("E2", "E0"), comparar("E1", "E2")), fill= TRUE)
+tb <- rbindlist(list(comparar("E1", "E0"), comparar("E2", "E0"), comparar("E1", "E2"),
+                     comparar("E3", "E0"), comparar("E3", "E2"), comparar("E3", "E1")), fill= TRUE)
 if (nrow(tb) && "media" %in% names(tb)) {
   cat("Diferencias pareadas por semilla (millones; IC 95% bootstrap de la media):\n")
   for (i in seq_len(nrow(tb))) with(tb[i], if (is.na(media)) cat(sprintf("  %s: n=%d, faltan pares\n", comparacion, n)) else
@@ -81,11 +83,12 @@ if (nrow(tb) && "media" %in% names(tb)) {
       millones(ic_inf), millones(ic_sup), p2(p_wilcoxon),
       if (isTRUE(p_wilcoxon < 0.05 && (ic_inf > 0 || ic_sup < 0))) "  <- distinta de 0" else "")))
   cat("  (E1-E0: lo que aporta la genetica; E2-E0: agregar 3 formulas cualquiera;",
-      "E1-E2: lo que aporta BUSCAR la formula)\n\n")
+      "E1-E2: lo que aporta BUSCAR la formula; E3-E1: entrenar el fitness con todos",
+      "los meses en vez de 6)\n\n")
 }
 
 # --- la genetica por dentro: busqueda, umbral de Andres y control -----------
-rondas <- rbindlist(lapply(runs[brazo %in% c("E1", "E2")]$carpeta, function(d) {
+rondas <- rbindlist(lapply(runs[brazo %in% c("E1", "E2", "E3")]$carpeta, function(d) {
   f <- file.path(d, "genetica_rondas.txt")
   if (!file.exists(f)) return(NULL)
   r <- fread(f, sep= "\t")
@@ -98,11 +101,12 @@ rondas <- rbindlist(lapply(runs[brazo %in% c("E1", "E2")]$carpeta, function(d) {
 
 if (nrow(rondas)) {
   fwrite(rondas, file.path(SALIDA, "genetica.csv"))
-  g <- rondas[brazo == "E1"]
-  if (nrow(g)) {
+  for (b in intersect(c("E1", "E3"), unique(rondas$brazo))) {
+    g <- rondas[brazo == b]
     g[, pasa_2sd := mejora > umbral]
     g[, pasa_control := puesto_control == 1 & mejora_control > 0]
-    cat("Genetica (E1), una fila por ronda: la busqueda mide en 202101, el control en 202103\n")
+    cat(sprintf("Genetica (%s, %s), una fila por ronda: la busqueda mide en 202101, el control en 202103\n",
+      b, if (b == "E1") "fitness con 6 meses" else "fitness con todos los meses"))
     print(g[order(semilla, ronda), .(semilla, ronda, formula,
       busqueda= miles(mejora), umbral_2sd= miles(umbral), pasa_2sd,
       control= miles(mejora_control), puesto= paste0(puesto_control, "/20"),
@@ -118,11 +122,12 @@ if (nrow(rondas)) {
     else cat("Ninguna formula gano en mas de una semilla.\n")
     # las semillas donde el control dice que si, ganan mas?
     por_semilla <- g[, .(pasan= sum(pasa_control, na.rm= TRUE)), by= semilla]
-    if (all(c("E1", "E0") %in% names(ancho))) {
-      por_semilla <- merge(por_semilla, ancho[, .(semilla, dif= E1 - E0)], by= "semilla")
-      cat("\nE1-E0 segun cuantas rondas pasaron el control en esa semilla:\n")
-      print(por_semilla[order(-pasan), .(semilla, pasan, dif_E1_E0= millones(dif))], row.names= FALSE)
+    if (all(c(b, "E0") %in% names(ancho))) {
+      por_semilla <- merge(por_semilla, ancho[, .(semilla, dif= get(b) - E0)], by= "semilla")
+      cat(sprintf("\n%s-E0 segun cuantas rondas pasaron el control en esa semilla:\n", b))
+      print(por_semilla[order(-pasan), .(semilla, pasan, dif= millones(dif))], row.names= FALSE)
     }
+    cat("\n")
   }
   a <- rondas[brazo == "E2"]
   if (nrow(a)) {

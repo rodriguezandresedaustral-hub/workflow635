@@ -26,7 +26,8 @@
 # v2 (todo opcional desde el .env; sin las variables nuevas corre como antes,
 # salvo la genetica, que ahora mide en otros meses y decide con un control):
 #   * la genetica busca en GA_VALIDA_BUSQUEDA y confirma en GA_VALIDA_CONTROL,
-#     meses que ni la BO ni el testing usan. La ganadora de cada ronda queda
+#     meses que ni la BO ni el testing usan, entrenando con todos los meses
+#     anteriores (o los GA_VENTANA anteriores). La ganadora de cada ronda queda
 #     solo si le gana a GA_N_CONTROL formulas al azar de la misma gramatica
 #   * GA_MODO = genetica | azar | nada, para comparar brazos con las mismas
 #     semillas; GA_FORZAR=1 deja entrar las ganadoras igual (y registra el control)
@@ -151,15 +152,16 @@ PARAM$GA$proteger_de_canaritos <- FALSE   # TRUE: canaritos no puede borrar las 
 # ganancia de validacion salia inflada a favor de las gen_*. Ahora:
 #   busqueda: donde gramEvol mide cada formula
 #   control:  donde se confirma la ganadora de la ronda (la busqueda no lo ve)
-# Cada mes se entrena con los GA_VENTANA meses anteriores, dejando uno de gap,
-# con el 20% de los CONTINUA. Nunca el mes de la BO ni el de testing.
+# Cada mes se entrena con todos los meses desde 201901 hasta dos antes (uno de
+# gap, como la v1), o solo con los GA_VENTANA anteriores si se pide, y con el
+# 20% de los CONTINUA. Nunca el mes de la BO ni el de testing.
 leer_meses <- function(variable, defecto) {
   v <- Sys.getenv(variable, "")
   if (v == "") defecto else as.integer(strsplit(v, ",")[[1]])
 }
 PARAM$GA$valida_busqueda <- leer_meses("GA_VALIDA_BUSQUEDA", if (GRUPO == "A") 202103 else 202101)
 PARAM$GA$valida_control  <- leer_meses("GA_VALIDA_CONTROL",  if (GRUPO == "A") 202105 else 202103)
-PARAM$GA$ventana       <- as.integer(env_o("GA_VENTANA", "6"))
+PARAM$GA$ventana       <- as.integer(env_o("GA_VENTANA", "0"))    # 0 = todos los meses
 PARAM$GA$n_control     <- as.integer(env_o("GA_N_CONTROL", "19"))   # p = 1/(n+1) si la ganadora no vale nada
 prohibidos <- if (GRUPO == "A") c(202107, 202109) else c(202105, 202107)
 if (any(c(PARAM$GA$valida_busqueda, PARAM$GA$valida_control) %in% prohibidos))
@@ -445,12 +447,14 @@ ga_columnas_candidato <- function(formula, s) {
         gen_delta1= d$delta1[f], gen_delta2= d$delta2[f])
 }
 
-# los meses de entrenamiento de un mes de validacion: PARAM$GA$ventana meses
-# que terminan dos antes (un mes de gap, como entre training y validate)
+# los meses de entrenamiento de un mes de validacion: desde 201901 (o los
+# PARAM$GA$ventana meses, si es > 0) hasta dos antes (un mes de gap, como
+# entre training y validate)
 GA_MESES <- c(201901:201912, 202001:202012, 202101:202112)
 ga_ventana <- function(mes) {
   i <- match(mes, GA_MESES)
-  GA_MESES[max(1, i - 1 - PARAM$GA$ventana):(i - 2)]
+  desde <- if (PARAM$GA$ventana > 0) max(1, i - 1 - PARAM$GA$ventana) else 1
+  GA_MESES[desde:(i - 2)]
 }
 
 # una muestra del fitness: la ventana con el PARAM$GA$undersampling de los

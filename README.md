@@ -22,8 +22,8 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
     campos del mes, con `+ − × /`.
   - **Fitness:** cuánta ganancia agrega la fórmula a un LightGBM fijo, medida
     en un **mes de búsqueda** que ni la BO ni el testing usan (A: 202103,
-    B: 202101), entrenando con los 6 meses anteriores (1 de gap) y el 20% de
-    los CONTINUA. Ver [La genética v2](#la-genética-v2).
+    B: 202101), entrenando con todos los meses desde 201901 hasta 1 de gap
+    (o solo los `GA_VENTANA` anteriores) y el 20% de los CONTINUA. Ver [La genética v2](#la-genética-v2).
   - Por ronda, la mejor fórmula pasa por un **control** en otro mes que la
     búsqueda no vio (A: 202105, B: 202103): se mide junto a 19 fórmulas al
     azar de la misma gramática y **queda solo si sale primera y mejora**
@@ -116,7 +116,7 @@ salvo los meses y la regla de la genética):
 | `GA_MODO` | `genetica` (default), `azar` (una fórmula sorteada por ronda, sin búsqueda) o `nada` (sin FE genético) |
 | `GA_FORZAR=1` | las ganadoras entran aunque no pasen el control (el veredicto queda registrado igual) |
 | `GA_VALIDA_BUSQUEDA`, `GA_VALIDA_CONTROL` | meses de la genética (defaults en la tabla de arriba) |
-| `GA_VENTANA` | meses de entrenamiento del fitness (6) |
+| `GA_VENTANA` | meses de entrenamiento del fitness antes de cada mes, con 1 de gap (vacío o 0: todos desde 201901, como la v1; 6 es ~4 veces más rápido) |
 | `GA_N_CONTROL` | fórmulas al azar del control (19) |
 | `GA_UNDERSAMPLING` | fracción de CONTINUA en el fitness (0.2) |
 | `GA_RONDAS` | rondas de la genética (3) |
@@ -132,8 +132,9 @@ respuesta y no sirve para eso.
 
 **¿La genética mejora el modelo final?** Eso no se ve en una corrida del LB
 público (el desvío de la diferencia entre dos corridas ronda los 7 M). Para
-eso está el [experimento de brazos](brazos/README.md): grupo B, 6 semillas
-pareadas, sin genética vs. genética vs. fórmulas al azar.
+eso está el [experimento de brazos](brazos/README.md): grupo B, las 10
+semillas asignadas pareadas, sin genética vs. genética (fitness con 6 meses y
+con todos) vs. fórmulas al azar.
 
 ## Puesta en marcha
 

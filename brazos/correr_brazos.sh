@@ -1,10 +1,12 @@
 #!/bin/bash
 # ===========================================================================
 # Cola de brazos del workflow635 v2 en la VM (grupo B, 202107 con clase real)
-#   E0 = sin genetica, E1 = genetica v2 (ganadoras forzadas, el veredicto del
-#   control queda registrado), E2 = formulas al azar.
-#   Por cada semilla del pipeline corre los tres brazos seguidos: si la cola se
-#   corta a mitad, lo que termino ya esta pareado por semilla.
+#   E0 = sin genetica, E1 = genetica v2 con 6 meses de fitness (ganadoras
+#   forzadas, el veredicto del control queda registrado), E2 = formulas al azar,
+#   E3 = E1 con todos los meses de fitness.
+#   Por cada semilla del pipeline corre todos los brazos seguidos: si la cola se
+#   corta a mitad, lo que termino ya esta pareado por semilla. Las semillas son
+#   las 10 asignadas (Andres y Marcos), intercaladas.
 #
 # Corre como ds, duena del bucket (en las VM de la catedra los demas usuarios
 # no pueden leerlo). Desde un usuario con sudo, para que apague al terminar:
@@ -20,8 +22,8 @@ set -u
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 EXP=/home/ds/buckets/b1/exp
 LOGS=$EXP/brazos_v2
-SEMILLAS=${SEMILLAS:-"100213 100313 100613 100913 101113 570991"}
-BRAZOS=${BRAZOS:-"E0 E1 E2"}
+SEMILLAS=${SEMILLAS:-"100213 271211 100313 353161 100613 487757 100913 641371 101113 823541"}
+BRAZOS=${BRAZOS:-"E0 E1 E2 E3"}
 REINTENTOS=${REINTENTOS:-1}
 BORRAR_CHECKPOINTS=${BORRAR_CHECKPOINTS:-1}
 
