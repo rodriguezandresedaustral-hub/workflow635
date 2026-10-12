@@ -13,6 +13,7 @@
 #   cd /tmp && nohup setsid bash -c 'sudo -u ds -H bash /home/ds/buckets/b1/wf635v2/brazos/correr_brazos.sh; sudo poweroff' > ~/cola_brazos.log 2>&1 < /dev/null &
 # Opcionales (con sudo -u ds -H env VAR=... bash ...):
 #   SEMILLAS="100213 100313"  BRAZOS="E0"  REINTENTOS=1
+#   o, por VM, un archivo $EXP/brazos_v2/semillas_<hostname> con sus semillas
 #   BORRAR_CHECKPOINTS=1   borra los .fst de checkpoints/ de cada corrida TERMINADA
 # Para frenar al terminar la corrida en curso: touch $EXP/brazos_v2/PARAR
 # Una corrida con TERMINADO se saltea; una que fallo se relanza y retoma desde
@@ -22,6 +23,9 @@ set -u
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 EXP=/home/ds/buckets/b1/exp
 LOGS=$EXP/brazos_v2
+# para repartir la cola entre varias VM: $LOGS/semillas_<hostname> con las semillas de cada una
+F=$LOGS/semillas_$(hostname -s)
+[ -z "${SEMILLAS:-}" ] && [ -f "$F" ] && SEMILLAS=$(tr '\n' ' ' < "$F")
 SEMILLAS=${SEMILLAS:-"100213 271211 100313 353161 100613 487757 100913 641371 101113 823541"}
 BRAZOS=${BRAZOS:-"E0 E1 E2 E3"}
 REINTENTOS=${REINTENTOS:-1}

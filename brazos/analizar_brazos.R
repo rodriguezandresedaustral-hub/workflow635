@@ -136,10 +136,10 @@ if (nrow(rondas)) {
   }
 }
 
-# --- tiempos de la cola ------------------------------------------------------
-f <- file.path(SALIDA, "tiempos.tsv")
-if (file.exists(f)) {
-  t <- fread(f)
+# --- tiempos de la cola (tiempos_<vm>.tsv si la cola se repartio entre VM) ---
+f <- list.files(SALIDA, "^tiempos.*[.]tsv$", full.names= TRUE)
+if (length(f)) {
+  t <- rbindlist(lapply(f, fread))
   if (nrow(t)) {
     cat("\nMinutos por corrida (cola):\n")
     print(t[, .(corridas= .N, fallidas= sum(rc != 0), mediana_min= median(minutos)), by= brazo], row.names= FALSE)
