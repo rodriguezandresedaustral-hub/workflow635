@@ -21,15 +21,20 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
   - `gramEvol` evoluciona fórmulas `v1 op v2` o `(v1 op v2) op v3` sobre los
     campos del mes, con `+ − × /`.
   - **Fitness:** cuánta ganancia agrega la fórmula a un LightGBM fijo, medida
-    en el mes de validación del grupo (A: 202107, B: 202105), nunca en el de
-    testing.
-  - Por ronda se queda con la mejor fórmula **solo si mejora más que 2 desvíos
-    del ruido entre semillas**; si no, corta. Cada ganadora entra como
-    `gen_01`, `gen_02`... y después recibe lags, deltas y tendencia como
-    cualquier campo.
+    en un **mes de búsqueda** que ni la BO ni el testing usan (A: 202103,
+    B: 202101), entrenando con todos los meses desde 201901 hasta 1 de gap
+    (o solo los `GA_VENTANA` anteriores) y el 20% de los CONTINUA. Ver [La genética v2](#la-genética-v2).
+  - Por ronda, la mejor fórmula pasa por un **control** en otro mes que la
+    búsqueda no vio (A: 202105, B: 202103): se mide junto a 19 fórmulas al
+    azar de la misma gramática y **queda solo si sale primera y mejora**
+    (si no aporta nada, eso pasa con probabilidad 1/20). El umbral de 2
+    desvíos del ruido entre semillas se sigue calculando, pero solo queda en
+    el registro. Cada ganadora entra como `gen_01`, `gen_02`... y después
+    recibe lags, deltas y tendencia como cualquier campo.
   - Cada fórmula evaluada queda en `genetica_log.txt` (si la VM se corta,
-    retoma sin volver a entrenar lo medido) y cada ronda en
-    `genetica_rondas.txt`.
+    retoma sin volver a entrenar lo medido), cada ronda en
+    `genetica_rondas.txt` y el control de cada ronda en
+    `genetica_control.txt`.
   - Mail en cada generación con las 10 mejores fórmulas, los segundos por
     fórmula y las horas usadas, y al terminar cada ronda.
   - **Tope de horas opcional** (`PARAM$GA$horas_max`, apagado por defecto):
@@ -64,6 +69,72 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
 
   El z635 solo grababa la BO cada 600 s y nunca durante el diseño inicial (20
   entrenamientos): si se cortaba ahí, se perdía todo.
+
+## La genética v2
+
+La primera versión de la genética tenía dos problemas de diseño que la
+hacían aceptar ruido:
+
+1. **Elegía con el mismo mes que valida la BO.** El fitness medía en 202107
+   (A) o 202105 (B), que es el `validate` de la BO. Las `gen_*` se eligen por
+   ser buenas en ese mes y después la BO evalúa en ese mismo mes: la ganancia
+   de validación sale inflada a favor de ellas.
+2. **El umbral de 2 desvíos compara cosas distintas.** Compara el *máximo* de
+   cientos de fórmulas contra el ruido entre semillas de *una* sola (y con 3
+   semillas, un desvío muy impreciso). El máximo de muchas fórmulas inútiles
+   supera 2 desvíos casi seguro (winner's curse).
+
+La v2 mide en otros meses y decide con un control contra el azar:
+
+| Grupo | Búsqueda (gramEvol) | Control | Nunca |
+|---|---|---|---|
+| A | 202103 | 202105 | 202107, 202109 |
+| B | 202101 | 202103 | 202105, 202107 |
+
+El script corta con error si se le pide medir en un mes prohibido.
+
+**Prueba con datos sintéticos** (una variable con señal plantada, `v1 / v2`,
+y el resto ruido puro; control de 5 fórmulas al azar para que fuera rápido).
+Las ganadoras de la búsqueda, ronda por ronda:
+
+| Fórmula | Mejora en la búsqueda | Umbral 2 desvíos | Regla v1 | Mejora en el control | Puesto | Regla v2 |
+|---|---|---|---|---|---|---|
+| ronda 1: `(v3 * v6) + v3` (ruido) | 3.000.700 | 2.457.304 | queda | −796.300 | 2 de 6 | descartada |
+| ronda 2: `(v6 * v3) - v3` (ruido) | 3.048.150 | 2.457.304 | queda | −1.160.550 | 3 de 6 | descartada |
+
+Las dos fórmulas de ruido superan el umbral porque cada una es la mejor de
+cientos; en un mes que no vieron, pierden. Puesta a mano en el control,
+`v1 / v2` (la señal) sale primera con +628.800. El costo del control es que
+el ruido también puede salir primero: con 5 fórmulas al azar, 1 de cada 6
+veces; con las 19 de la configuración real, 1 de cada 20.
+
+**Variables nuevas del `.env`** (todas opcionales; sin ellas corre como antes,
+salvo los meses y la regla de la genética):
+
+| Variable | Qué hace |
+|---|---|
+| `GA_MODO` | `genetica` (default), `azar` (una fórmula sorteada por ronda, sin búsqueda) o `nada` (sin FE genético) |
+| `GA_FORZAR=1` | las ganadoras entran aunque no pasen el control (el veredicto queda registrado igual) |
+| `GA_VALIDA_BUSQUEDA`, `GA_VALIDA_CONTROL` | meses de la genética (defaults en la tabla de arriba) |
+| `GA_VENTANA` | meses de entrenamiento del fitness antes de cada mes, con 1 de gap (vacío o 0: todos desde 201901, como la v1; 6 es ~4 veces más rápido) |
+| `GA_N_CONTROL` | fórmulas al azar del control (19) |
+| `GA_UNDERSAMPLING` | fracción de CONTINUA en el fitness (0.2) |
+| `GA_RONDAS` | rondas de la genética (3) |
+| `HT_FIJO` | ruta a un `BO_log.txt` de otra corrida: se usa su mejor fila y no se corre la BO |
+| `FT_SEMILLAS_N` | cuántas semillas del semillerio final usar (default: las 9) |
+| `FT_UNDERSAMPLING` | fracción de CONTINUA en el final train (default 1 = todos) |
+| `KAGGLE_SUBIR=0` | grupo A sin subir a Kaggle (los CSV quedan igual) |
+
+En grupo B la corrida graba además `ganancia_meseta.txt`: el promedio de la
+ganancia en 202107 en los 9 cortes fijos (8.000 a 12.000 envíos). Es la
+métrica para comparar corridas; el máximo de la curva se elige mirando la
+respuesta y no sirve para eso.
+
+**¿La genética mejora el modelo final?** Eso no se ve en una corrida del LB
+público (el desvío de la diferencia entre dos corridas ronda los 7 M). Para
+eso está el [experimento de brazos](brazos/README.md): grupo B, las 10
+semillas asignadas pareadas, sin genética vs. genética (fitness con 6 meses y
+con todos) vs. fórmulas al azar.
 
 ## Puesta en marcha
 
@@ -223,8 +294,8 @@ Pendiente:
 
 - **El fitness de la genética.** Es un LightGBM de 200 árboles sobre una
   muestra sin lags: no está validado que prediga la ganancia del workflow
-  completo. Opciones: validarlo pasando sus mejores fórmulas por el workflow
-  entero, o un fitness más fiel (dataset completo, lags de la fórmula, varias
-  semillas).
+  completo. Validarlo pasando sus ganadoras por el workflow entero es el
+  [experimento de brazos](brazos/README.md); la otra opción sigue siendo un
+  fitness más fiel (dataset completo, lags de la fórmula, varias semillas).
 - **El tamaño de la búsqueda** (`PARAM$GA$poblacion`, `generaciones`), que
   con ~3 s por fórmula puede crecer mucho.
