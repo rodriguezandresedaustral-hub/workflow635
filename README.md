@@ -113,7 +113,7 @@ salvo los meses y la regla de la genética):
 
 | Variable | Qué hace |
 |---|---|
-| `GA_MODO` | `genetica` (default), `azar` (una fórmula sorteada por ronda, sin búsqueda) o `nada` (sin FE genético) |
+| `GA_MODO` | `genetica` (default), `azar` (una fórmula sorteada por ronda, sin búsqueda), `nada` (sin FE genético) o `transferencia` (ver abajo) |
 | `GA_FORZAR=1` | las ganadoras entran aunque no pasen el control (el veredicto queda registrado igual) |
 | `GA_VALIDA_BUSQUEDA`, `GA_VALIDA_CONTROL` | meses de la genética (defaults en la tabla de arriba) |
 | `GA_VENTANA` | meses de entrenamiento del fitness antes de cada mes, con 1 de gap (vacío o 0: todos desde 201901, como la v1; 6 es ~4 veces más rápido) |
@@ -124,6 +124,18 @@ salvo los meses y la regla de la genética):
 | `FT_SEMILLAS_N` | cuántas semillas del semillerio final usar (default: las 9) |
 | `FT_UNDERSAMPLING` | fracción de CONTINUA en el final train (default 1 = todos) |
 | `KAGGLE_SUBIR=0` | grupo A sin subir a Kaggle (los CSV quedan igual) |
+| `TRF_BUSQUEDAS`, `TRF_MEDIR`, `TRF_TOP` | solo con `GA_MODO=transferencia`: meses de búsqueda, meses donde se vuelve a medir y cuántas fórmulas (20) |
+
+**`GA_MODO=transferencia`** no corre el workflow: después del FE intra-mes,
+por cada mes de búsqueda corre una ronda de la genética, toma las 20 mejores
+fórmulas distintas y 20 al azar de la misma gramática, y mide las 40 en los
+meses posteriores con 3 semillas de LightGBM, contra la base sin fórmula.
+Responde si lo que elige la genética en un mes sigue sirviendo después, más
+que una fórmula cualquiera, sin pasar por el modelo final. Graba
+`transferencia.txt` (una fila por medición; es también el checkpoint),
+`transferencia_formulas.txt` y `transferencia_resumen.txt`, manda el resumen
+por mail y termina. Con los defaults del grupo A son unas 8 h en
+`to-128ram-12vcpu` (estimado con los ~30 s por fórmula de WF9501).
 
 En grupo B la corrida graba además `ganancia_meseta.txt`: el promedio de la
 ganancia en 202107 en los 9 cortes fijos (8.000 a 12.000 envíos). Es la
