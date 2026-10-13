@@ -168,9 +168,14 @@ PARAM$GA$valida_control  <- leer_meses("GA_VALIDA_CONTROL",  if (GRUPO == "A") 2
 PARAM$GA$ventana       <- as.integer(env_o("GA_VENTANA", "0"))    # 0 = todos los meses
 PARAM$GA$n_control     <- as.integer(env_o("GA_N_CONTROL", "19"))   # p = 1/(n+1) si la ganadora no vale nada
 prohibidos <- if (GRUPO == "A") c(202107, 202109) else c(202105, 202107)
-if (any(c(PARAM$GA$valida_busqueda, PARAM$GA$valida_control) %in% prohibidos))
+# GA_BUSQUEDA_EN_BO=1 (idea del #3, brazo E4): la busqueda puede medir en el mes
+# de validacion de la BO, el mes con clase mas cercano al testing. El control no
+PARAM$GA$busqueda_en_bo <- Sys.getenv("GA_BUSQUEDA_EN_BO", "0") == "1"
+prohibidos_busqueda <- if (PARAM$GA$busqueda_en_bo) setdiff(prohibidos, if (GRUPO == "A") 202107 else 202105) else prohibidos
+if (any(PARAM$GA$valida_busqueda %in% prohibidos_busqueda) || any(PARAM$GA$valida_control %in% prohibidos))
   stop("la genetica no puede medir en ", paste(prohibidos, collapse= " ni "),
-       " (validacion de la BO y testing del grupo ", GRUPO, ")")
+       " (validacion de la BO y testing del grupo ", GRUPO, ")",
+       if (PARAM$GA$busqueda_en_bo) " (con GA_BUSQUEDA_EN_BO=1 la busqueda si puede en el mes de la BO)")
 if (length(intersect(PARAM$GA$valida_busqueda, PARAM$GA$valida_control)))
   stop("GA_VALIDA_BUSQUEDA y GA_VALIDA_CONTROL no pueden compartir meses")
 PARAM$GA$undersampling <- as.numeric(env_o("GA_UNDERSAMPLING", "0.2"))   # = training_pct del z635

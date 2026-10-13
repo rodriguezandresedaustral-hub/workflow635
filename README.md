@@ -116,6 +116,7 @@ salvo los meses y la regla de la genética):
 | `GA_MODO` | `genetica` (default), `azar` (una fórmula sorteada por ronda, sin búsqueda), `nada` (sin FE genético) o `transferencia` (ver abajo) |
 | `GA_FORZAR=1` | las ganadoras entran aunque no pasen el control (el veredicto queda registrado igual) |
 | `GA_VALIDA_BUSQUEDA`, `GA_VALIDA_CONTROL` | meses de la genética (defaults en la tabla de arriba) |
+| `GA_BUSQUEDA_EN_BO=1` | deja que la búsqueda mida en el mes de validación de la BO (202107 en el A, 202105 en el B); el control sigue sin poder. Lo usa el brazo E4 |
 | `GA_VENTANA` | meses de entrenamiento del fitness antes de cada mes, con 1 de gap (vacío o 0: todos desde 201901, como la v1; 6 es ~4 veces más rápido) |
 | `GA_N_CONTROL` | fórmulas al azar del control (19) |
 | `GA_UNDERSAMPLING` | fracción de CONTINUA en el fitness (0.2) |
@@ -248,6 +249,24 @@ Log en vivo:
 gsutil cat gs://<bucket>/wf635/A/log.txt | tail -50
 ```
 
+### 5. Ensamble de semillas (grupo A)
+
+`ensamblar.R` promedia la `prob` del `prediccion.txt` de varias corridas
+terminadas y escribe los mismos 9 cortes que el workflow, para subir a mano.
+En una VM con el bucket montado y el repo copiado en
+`/home/ds/buckets/b1/wf635v2` (como en [brazos](brazos/README.md#cómo-correrlo)):
+
+```sh
+E=/home/ds/buckets/b1/exp
+cd /tmp
+sudo -u ds -H Rscript /home/ds/buckets/b1/wf635v2/ensamblar.R $E/ENS_E2A $E/WF9912_s100213 $E/WF9912_s100313 $E/WF9912_s271211
+```
+
+Deja `ENS_E2A/kaggle/KAENS_E2A_<envios>.csv` y la `prob` promedio, con la de
+cada corrida al lado, en `ENS_E2A/prediccion.txt`. En el LB público, promediar
+3 semillas sumó de 2 a 5 M de meseta contra una corrida suelta
+([resultados](brazos/README.md#resultados-2026-10-13)).
+
 ## Las máquinas
 
 Los templates de la cátedra están en el proyecto
@@ -306,8 +325,9 @@ Pendiente:
 
 - **El fitness de la genética.** Es un LightGBM de 200 árboles sobre una
   muestra sin lags: no está validado que prediga la ganancia del workflow
-  completo. Validarlo pasando sus ganadoras por el workflow entero es el
-  [experimento de brazos](brazos/README.md); la otra opción sigue siendo un
-  fitness más fiel (dataset completo, lags de la fórmula, varias semillas).
+  completo. El [experimento de brazos](brazos/README.md#resultados-2026-10-13)
+  pasó sus ganadoras por el workflow entero: no le ganan a 3 fórmulas
+  sorteadas de la misma gramática. Lo que queda es un fitness más fiel
+  (dataset completo, lags de la fórmula, varias semillas).
 - **El tamaño de la búsqueda** (`PARAM$GA$poblacion`, `generaciones`), que
   con ~3 s por fórmula puede crecer mucho.
