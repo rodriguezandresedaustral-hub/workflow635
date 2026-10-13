@@ -129,8 +129,12 @@ PARAM$FE_rf$run <- TRUE
 #   GA_MODO=azar      una formula sorteada por ronda, sin busqueda: el brazo
 #                     de control para saber si la genetica le gana al azar
 #   GA_MODO=nada      sin FE genetico: el brazo base
+#   GA_MODO=transferencia  no corre el workflow: mide si lo que elige la
+#                     genetica en un mes sigue sirviendo meses despues (ver
+#                     correr_transferencia) y termina
 PARAM$GA$modo   <- env_o("GA_MODO", "genetica")
-if (!(PARAM$GA$modo %in% c("genetica", "azar", "nada"))) stop("GA_MODO tiene que ser genetica, azar o nada")
+if (!(PARAM$GA$modo %in% c("genetica", "azar", "nada", "transferencia")))
+  stop("GA_MODO tiene que ser genetica, azar, nada o transferencia")
 PARAM$GA$forzar <- env_o("GA_FORZAR", "0") == "1"   # 1: entran aunque no pasen el control
 PARAM$GA$rondas        <- as.integer(env_o("GA_RONDAS", "3"))   # cuantas variables geneticas buscar como maximo
 PARAM$GA$poblacion     <- as.integer(Sys.getenv("GA_POBLACION", "30"))     # formulas por generacion
@@ -171,6 +175,17 @@ if (length(intersect(PARAM$GA$valida_busqueda, PARAM$GA$valida_control)))
   stop("GA_VALIDA_BUSQUEDA y GA_VALIDA_CONTROL no pueden compartir meses")
 PARAM$GA$undersampling <- as.numeric(env_o("GA_UNDERSAMPLING", "0.2"))   # = training_pct del z635
 PARAM$GA$semillas_ruido <- c(100213, 100313, 100613)
+
+# GA_MODO=transferencia: meses donde busca la genetica (una ronda por mes) y
+# meses donde se vuelven a medir las formulas (solo los posteriores a cada
+# busqueda). Nunca el testing: A llega hasta 202107, B hasta 202105
+PARAM$TRF$busquedas <- leer_meses("TRF_BUSQUEDAS", if (GRUPO == "A") c(202101, 202103) else c(202011, 202101))
+PARAM$TRF$medir     <- leer_meses("TRF_MEDIR", if (GRUPO == "A") c(202103, 202105, 202107) else c(202101, 202103, 202105))
+PARAM$TRF$top       <- as.integer(env_o("TRF_TOP", "20"))   # formulas de la genetica y otras tantas al azar
+PARAM$TRF$semillas  <- PARAM$GA$semillas_ruido               # semillas de LightGBM en cada medicion
+if (PARAM$GA$modo == "transferencia" &&
+    any(c(PARAM$TRF$busquedas, PARAM$TRF$medir) %in% (if (GRUPO == "A") 202109 else 202107)))
+  stop("la transferencia no puede medir en el mes de testing del grupo ", GRUPO)
 PARAM$GA$lgb_param <- list(
   objective= "binary",
   num_iterations= 200,
@@ -709,6 +724,172 @@ correr_genetica <- function() {
   PARAM$GA$ganadoras <<- ga_ganadoras()
   rm(list= c("busqueda", "control"), envir= GA)
   gc(verbose= FALSE)
+}
+
+# ===========================================================================
+# TRANSFERENCIA (GA_MODO=transferencia): no corre el workflow
+#   Pregunta: una formula que la genetica elige en un mes, ¿sigue sirviendo en
+#   los meses siguientes, mas que una formula cualquiera? Si no, ningun
+#   workflow la salva; si si, vale la pena medirla con el workflow entero.
+#   Por cada mes de busqueda b (PARAM$TRF$busquedas):
+#     1. una ronda de gramEvol en b, igual a la de la genetica (mismo fitness,
+#        misma gramatica, PARAM$GA$poblacion x PARAM$GA$generaciones)
+#     2. las PARAM$TRF$top mejores formulas distintas de esa busqueda y otras
+#        tantas al azar de la misma gramatica
+#     3. las dos tandas se miden en cada mes posterior a b (PARAM$TRF$medir),
+#        con las semillas PARAM$TRF$semillas, contra la base sin formula
+#   transferencia.txt          una fila por formula x mes x semilla; es tambien
+#                              el checkpoint: lo ya medido no se vuelve a entrenar
+#   transferencia_formulas.txt la mejora de cada formula en cada mes
+#   transferencia_resumen.txt  la comparacion; va tambien por mail
+# ===========================================================================
+ARCH_TRF <- "transferencia.txt"
+
+millones <- function(x) formatC(x / 1e6, format= "f", digits= 2, big.mark= ".", decimal.mark= ",")
+
+trf_resumen <- function() {
+  d <- fread(ARCH_TRF, sep= "\t")
+  base <- d[tipo == "BASE", .(busqueda, mes, semilla, base= ganancia)]
+  d <- merge(d[tipo != "BASE"], base, by= c("busqueda", "mes", "semilla"))
+  d[, mejora := ganancia - base]
+  # una mejora por formula y mes: el promedio de las semillas
+  f <- d[, .(mejora= mean(mejora, na.rm= TRUE)), by= .(busqueda, tipo, puesto, formula, mes)]
+  busq <- f[mes == busqueda, .(busqueda, tipo, formula, mejora_busqueda= mejora)]
+  f <- merge(f[mes != busqueda], busq, by= c("busqueda", "tipo", "formula"), all.x= TRUE)
+  fwrite(f, "transferencia_formulas.txt", sep= "\t")
+  if (!nrow(f)) return("Transferencia: todavia no hay mediciones despues de la busqueda.")
+  ruido <- base[mes != busqueda, .(ruido= sd(base)), by= .(busqueda, mes)]
+  res <- f[, {
+    ga <- mejora[tipo == "GA"]; az <- mejora[tipo == "AZAR"]
+    p <- tryCatch(wilcox.test(ga, az)$p.value, error= function(e) NA_real_)
+    rho <- function(t) { k <- tipo %in% t & !is.na(mejora_busqueda) & !is.na(mejora)
+      if (sum(k) < 5) NA_real_ else cor(mejora_busqueda[k], mejora[k], method= "spearman") }
+    .(n_ga= sum(!is.na(ga)), n_azar= sum(!is.na(az)),
+      ga= mean(ga, na.rm= TRUE), azar= mean(az, na.rm= TRUE),
+      dif= mean(ga, na.rm= TRUE) - mean(az, na.rm= TRUE), p_wilcoxon= p,
+      ganadora= mejora[which(tipo == "GA" & puesto %in% 1L)][1],
+      ga_sobre_mediana_azar= sum(ga > median(az, na.rm= TRUE), na.rm= TRUE),
+      rho_ga= rho("GA"), rho_todas= rho(c("GA", "AZAR")))
+  }, by= .(busqueda, mes)]
+  res <- merge(res, ruido, by= c("busqueda", "mes"), all.x= TRUE)
+  setorder(res, busqueda, mes)
+
+  dos <- function(x) formatC(x, format= "f", digits= 2, decimal.mark= ",")
+  lineas <- sprintf(paste0(
+    "busqueda %d -> medida en %d: genetica %s M, azar %s M, diferencia %s M (p Wilcoxon %s)\n",
+    "    ganadora de la busqueda: %s M | de las %d de la genetica, %d estan sobre la mediana del azar\n",
+    "    correlacion busqueda->despues (Spearman): genetica %s, todas %s | ruido de la base entre semillas %s M"),
+    res$busqueda, res$mes, millones(res$ga), millones(res$azar), millones(res$dif),
+    formatC(res$p_wilcoxon, format= "f", digits= 3, decimal.mark= ","),
+    millones(res$ganadora), res$n_ga, res$ga_sobre_mediana_azar,
+    dos(res$rho_ga), dos(res$rho_todas), millones(res$ruido))
+  texto <- paste0(
+    "Transferencia de la genetica: ", PARAM$TRF$top, " formulas de la genetica y ", PARAM$TRF$top,
+    " al azar, medidas en meses posteriores a la busqueda con ", length(PARAM$TRF$semillas),
+    " semillas de LightGBM (mejora = ganancia meseta con la formula menos sin ella, promedio de las semillas).\n\n",
+    paste(lineas, collapse= "\n\n"),
+    "\n\nComo leerlo: si la genetica encuentra algo que dura, la diferencia es positiva y\n",
+    "mayor que el ruido, y la correlacion busqueda->despues es positiva. Si las dos andan\n",
+    "en 0, lo que gana la busqueda es suerte de ese mes.\n",
+    "Detalle por formula en transferencia_formulas.txt")
+  writeLines(texto, "transferencia_resumen.txt")
+  texto
+}
+
+correr_transferencia <- function() {
+  PARAM$GA$mail_cada_gen <<- 0     # sin mail por generacion: uno por busqueda y por mes medido
+  GA$cache <- list()
+  if (file.exists(ARCH_GA_LOG)) {
+    l <- fread(ARCH_GA_LOG, sep= "\t")
+    for (i in seq_len(nrow(l))) GA$cache[[paste(l$ronda[i], l$formula[i])]] <-
+      if (es_referencia(l$formula[i])) l$ganancia[i] else l$mejora[i]
+    loguear("transferencia: ya hay", nrow(l), "formulas medidas en las busquedas")
+  }
+  hechas <- if (file.exists(ARCH_TRF)) fread(ARCH_TRF, sep= "\t") else data.table()
+  ya <- if (nrow(hechas)) paste(hechas$busqueda, hechas$tipo, hechas$formula, hechas$mes, hechas$semilla) else character()
+  medir <- function(b, tipo, puesto, formula, mes, semilla, fn) {
+    clave <- paste(b, tipo, formula, mes, semilla)
+    if (clave %in% ya) return(invisible())
+    t0 <- Sys.time()
+    g <- fn()
+    fwrite(data.table(busqueda= b, tipo= tipo, puesto= puesto, formula= formula, mes= mes,
+                      semilla= semilla, ganancia= g,
+                      segundos= round(as.numeric(difftime(Sys.time(), t0, units= "secs")), 1),
+                      fecha= format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+           ARCH_TRF, sep= "\t", append= file.exists(ARCH_TRF))
+    ya <<- c(ya, clave)
+  }
+
+  numericas <- names(dataset)[sapply(dataset, is.numeric)]
+  campos_modelo <- setdiff(numericas, "numero_de_cliente")
+  vars <- setdiff(numericas, c("numero_de_cliente", "foto_mes"))
+  gramatica <- CreateGrammar(list(
+    expr = gsrule("<var><op><var>", "(<var><op><var>)<op><var>"),
+    op   = gsrule(" + ", " - ", " * ", " / "),
+    var  = do.call(gsrule, as.list(vars))
+  ))
+  GA$umbral <- NA_real_
+  GA$horas <- 0
+  t_sesion <- Sys.time()
+  GA$horas_sesion <- function() as.numeric(difftime(Sys.time(), t_sesion, units= "hours"))
+
+  for (b in PARAM$TRF$busquedas) {
+    # 1. la busqueda: una ronda de gramEvol en b (la "ronda" del log es el mes)
+    t0 <- Sys.time()
+    GA$ronda <- b
+    GA$busqueda <- list(ga_muestra(b, campos_modelo))
+    GA$base <- ga_medir(paste0(b, " BASE"), function() ga_ganancia(GA$busqueda, NULL, PARAM$semilla_primigenia))
+    set.seed(PARAM$semilla_primigenia + b, kind = "L'Ecuyer-CMRG")
+    GrammaticalEvolution(gramatica, ga_costo,
+      optimizer= "ga", popSize= PARAM$GA$poblacion, iterations= PARAM$GA$generaciones,
+      monitorFunc= ga_monitor, disable.warnings= TRUE)
+    log_b <- fread(ARCH_GA_LOG, sep= "\t")[ronda == b & !es_referencia(formula) & mejora > GA_PENALIDAD / 2]
+    log_b <- unique(log_b[order(-mejora)], by= "formula")
+    top <- head(log_b, PARAM$TRF$top)
+    azar <- ga_formulas_azar(PARAM$TRF$top, vars, PARAM$semilla_primigenia + 3000 + b %% 10000, GA$busqueda[[1]])
+    cand <- data.table(tipo= c(rep("GA", nrow(top)), rep("AZAR", length(azar))),
+                       puesto= c(seq_len(nrow(top)), rep(NA_integer_, length(azar))),
+                       formula= c(top$formula, azar))
+    loguear("transferencia: busqueda en", b, "-", nrow(log_b), "formulas distintas, la mejor",
+            top$formula[1], "con", miles(top$mejora[1]))
+
+    # la busqueda tambien queda en transferencia.txt: las de la genetica con lo
+    # que midio gramEvol; las al azar se miden ahora, con la misma semilla
+    medir(b, "BASE", NA_integer_, "BASE", b, PARAM$semilla_primigenia, function() GA$base)
+    for (i in seq_len(nrow(top)))
+      medir(b, "GA", i, top$formula[i], b, PARAM$semilla_primigenia, function() GA$base + top$mejora[i])
+    for (f in azar)
+      medir(b, "AZAR", NA_integer_, f, b, PARAM$semilla_primigenia,
+            function() ga_ganancia(GA$busqueda, f, PARAM$semilla_primigenia))
+    rm(list= "busqueda", envir= GA); gc(verbose= FALSE)
+    mandar_mail(sprintf("transferencia: busqueda en %d terminada (%.0f min)", b,
+                        as.numeric(difftime(Sys.time(), t0, units= "mins"))), hilo= "iteraciones",
+      paste0(nrow(log_b), " formulas distintas medidas. Las ", nrow(top), " mejores:\n",
+             paste(sprintf("  %s  %s", formatC(top$mejora, format= "d", big.mark= ".", width= 14), top$formula),
+                   collapse= "\n"),
+             "\n\nAhora se miden junto a ", length(azar), " al azar en ",
+             paste(PARAM$TRF$medir[PARAM$TRF$medir > b], collapse= ", ")))
+
+    # 2. las dos tandas en cada mes posterior, contra la base de cada semilla
+    for (m in PARAM$TRF$medir[PARAM$TRF$medir > b]) {
+      t0 <- Sys.time()
+      s <- ga_muestra(m, campos_modelo)
+      for (sem in PARAM$TRF$semillas) {
+        medir(b, "BASE", NA_integer_, "BASE", m, sem, function() ga_entrenar(s$X, sem, s))
+        for (i in seq_len(nrow(cand)))
+          medir(b, cand$tipo[i], cand$puesto[i], cand$formula[i], m, sem, function() {
+            cols <- ga_columnas_candidato(cand$formula[i], s)
+            if (is.null(cols)) NA_real_ else ga_entrenar(cbind(s$X, cols), sem, s)
+          })
+      }
+      rm(s); gc(verbose= FALSE)
+      mins <- as.numeric(difftime(Sys.time(), t0, units= "mins"))
+      loguear("transferencia: busqueda", b, "medida en", m, sprintf("(%.0f min)", mins))
+      mandar_mail(sprintf("transferencia: %d medida en %d (%.0f min)", b, m, mins),
+                  trf_resumen(), hilo= "iteraciones")
+    }
+  }
+  trf_resumen()
 }
 
 # GRUPO A: Kaggle se prepara y se prueba al arrancar. Si no anda, avisa por
@@ -1457,6 +1638,15 @@ AgregarVariables_IntraMes(dataset)
     # los campos del mes: lo que combina la genetica
     GA_CAMPOS_MES <- setdiff(names(dataset)[sapply(dataset, is.numeric)],
                              c("numero_de_cliente", "foto_mes"))
+
+    if (PARAM$GA$modo == "transferencia") {
+      etapa("transferencia de la genetica")
+      resumen_trf <- correr_transferencia()
+      fin_etapa(resumen_trf)
+      mandar_mail("TERMINO (transferencia)", resumen_trf)
+      writeLines(format(Sys.time()), "TERMINADO")
+      quit(save= "no", status= 0)
+    }
 
     if (PARAM$GA$modo != "nada" && !PARAM$GA$con_historia) {
       etapa("FE genetico")
