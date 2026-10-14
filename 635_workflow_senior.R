@@ -825,9 +825,15 @@ correr_transferencia <- function() {
     ya <<- c(ya, clave)
   }
 
+  # con historia, lo mismo que correr_genetica: orden antes de las muestras y
+  # solo los campos del mes para combinar (la base ve los lags y tendencias)
+  if (PARAM$GA$con_historia) setorder(dataset, numero_de_cliente, foto_mes)
   numericas <- names(dataset)[sapply(dataset, is.numeric)]
   campos_modelo <- setdiff(numericas, "numero_de_cliente")
   vars <- setdiff(numericas, c("numero_de_cliente", "foto_mes"))
+  if (PARAM$GA$con_historia) vars <- intersect(GA_CAMPOS_MES, vars)
+  loguear("transferencia:", if (PARAM$GA$con_historia) "con historia" else "sin historia", "-",
+          length(campos_modelo), "campos en la base,", length(vars), "para combinar")
   gramatica <- CreateGrammar(list(
     expr = gsrule("<var><op><var>", "(<var><op><var>)<op><var>"),
     op   = gsrule(" + ", " - ", " * ", " / "),
@@ -895,6 +901,17 @@ correr_transferencia <- function() {
     }
   }
   trf_resumen()
+}
+
+# corre la transferencia, manda el resumen y termina (no sigue el workflow).
+# Sin historia va despues del FE intra-mes; con historia, despues del historico
+terminar_transferencia <- function() {
+  etapa("transferencia de la genetica")
+  resumen_trf <- correr_transferencia()
+  fin_etapa(resumen_trf)
+  mandar_mail("TERMINO (transferencia)", resumen_trf)
+  writeLines(format(Sys.time()), "TERMINADO")
+  quit(save= "no", status= 0)
 }
 
 # GRUPO A: Kaggle se prepara y se prueba al arrancar. Si no anda, avisa por
@@ -1644,14 +1661,7 @@ AgregarVariables_IntraMes(dataset)
     GA_CAMPOS_MES <- setdiff(names(dataset)[sapply(dataset, is.numeric)],
                              c("numero_de_cliente", "foto_mes"))
 
-    if (PARAM$GA$modo == "transferencia") {
-      etapa("transferencia de la genetica")
-      resumen_trf <- correr_transferencia()
-      fin_etapa(resumen_trf)
-      mandar_mail("TERMINO (transferencia)", resumen_trf)
-      writeLines(format(Sys.time()), "TERMINADO")
-      quit(save= "no", status= 0)
-    }
+    if (PARAM$GA$modo == "transferencia" && !PARAM$GA$con_historia) terminar_transferencia()
 
     if (PARAM$GA$modo != "nada" && !PARAM$GA$con_historia) {
       etapa("FE genetico")
@@ -1878,6 +1888,11 @@ if( PARAM$FE_hist$Tendencias$run) {
 }
 
     fin_etapa()
+
+    # con historia, la transferencia corre aca, despues del FE historico. Termina
+    # antes del checkpoint: si la VM se cae, rehace el FE y retoma desde
+    # genetica_log.txt y transferencia.txt
+    if (PARAM$GA$modo == "transferencia" && PARAM$GA$con_historia) terminar_transferencia()
 
     if (PARAM$GA$modo != "nada" && PARAM$GA$con_historia) {
       etapa("FE genetico")

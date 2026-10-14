@@ -135,8 +135,11 @@ Responde si lo que elige la genética en un mes sigue sirviendo después, más
 que una fórmula cualquiera, sin pasar por el modelo final. Graba
 `transferencia.txt` (una fila por medición; es también el checkpoint),
 `transferencia_formulas.txt` y `transferencia_resumen.txt`, manda el resumen
-por mail y termina. Con los defaults del grupo A son unas 8 h en
-`to-128ram-12vcpu` (estimado con los ~30 s por fórmula de WF9501).
+por mail y termina. Con los defaults del grupo A fueron unas 4,5 h en
+`to-128ram-12vcpu` (WF9530). Con `GA_CON_HISTORIA=1` corre después del FE
+histórico: la base del fitness ve los lags y tendencias, y cada fórmula entra
+con sus lags y deltas, como en la genética con historia (más lento: el dataset
+es más ancho).
 
 En grupo B la corrida graba además `ganancia_meseta.txt`: el promedio de la
 ganancia en 202107 en los 9 cortes fijos (8.000 a 12.000 envíos). Es la
