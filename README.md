@@ -139,7 +139,8 @@ por mail y termina. Con los defaults del grupo A fueron unas 4,5 h en
 `to-128ram-12vcpu` (WF9530). Con `GA_CON_HISTORIA=1` corre después del FE
 histórico: la base del fitness ve los lags y tendencias, y cada fórmula entra
 con sus lags y deltas, como en la genética con historia (más lento: el dataset
-es más ancho).
+es más ancho). Con `GA_COMBINAR_HISTORIA=1` además las fórmulas (y las
+sorteadas) combinan los lags, deltas y tendencias, no solo los campos del mes.
 
 En grupo B la corrida graba además `ganancia_meseta.txt`: el promedio de la
 ganancia en 202107 en los 9 cortes fijos (8.000 a 12.000 envíos). Es la

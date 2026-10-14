@@ -144,6 +144,13 @@ PARAM$GA$generaciones  <- as.integer(Sys.getenv("GA_GENERACIONES", "20"))  # gen
 # lag1, lag2, delta1 y delta2 (como la va a ver el modelo final). 0 = antes del
 # FE historico, solo con los campos del mes.
 PARAM$GA$con_historia  <- Sys.getenv("GA_CON_HISTORIA", "0") == "1"
+# GA_COMBINAR_HISTORIA=1 (requiere GA_CON_HISTORIA=1): las formulas combinan
+# tambien los lags, deltas y tendencias, no solo los campos del mes (lo que
+# sugirio Denicolay: la genetica al final, nutriendose de variables que ya son
+# buenas). Las formulas al azar se sortean de la misma lista
+PARAM$GA$combinar_historia <- Sys.getenv("GA_COMBINAR_HISTORIA", "0") == "1"
+if (PARAM$GA$combinar_historia && !PARAM$GA$con_historia)
+  stop("GA_COMBINAR_HISTORIA=1 requiere GA_CON_HISTORIA=1")
 PARAM$GA$mail_cada_gen <- 1     # mail de avance cada N generaciones
 PARAM$GA$horas_max     <- Inf   # sin tope: la genetica corre todas sus rondas y
                                 # generaciones. Con un numero, al llegar a esas horas
@@ -618,8 +625,9 @@ correr_genetica <- function() {
   numericas <- names(dataset)[sapply(dataset, is.numeric)]
   campos_modelo <- setdiff(numericas, "numero_de_cliente")
   vars <- setdiff(numericas, c("numero_de_cliente", "foto_mes"))
-  # con historia, se combinan solo los campos del mes (no los lags ni tendencias)
-  if (PARAM$GA$con_historia) vars <- intersect(GA_CAMPOS_MES, vars)
+  # con historia, se combinan solo los campos del mes (no los lags ni tendencias),
+  # salvo con GA_COMBINAR_HISTORIA=1
+  if (PARAM$GA$con_historia && !PARAM$GA$combinar_historia) vars <- intersect(GA_CAMPOS_MES, vars)
 
   # muestras del fitness: la de busqueda solo hace falta si hay genetica
   GA$busqueda <- if (PARAM$GA$modo == "genetica") lapply(PARAM$GA$valida_busqueda, ga_muestra, campos_modelo) else list()
@@ -831,8 +839,8 @@ correr_transferencia <- function() {
   numericas <- names(dataset)[sapply(dataset, is.numeric)]
   campos_modelo <- setdiff(numericas, "numero_de_cliente")
   vars <- setdiff(numericas, c("numero_de_cliente", "foto_mes"))
-  if (PARAM$GA$con_historia) vars <- intersect(GA_CAMPOS_MES, vars)
-  loguear("transferencia:", if (PARAM$GA$con_historia) "con historia" else "sin historia", "-",
+  if (PARAM$GA$con_historia && !PARAM$GA$combinar_historia) vars <- intersect(GA_CAMPOS_MES, vars)
+  loguear("transferencia:", if (PARAM$GA$combinar_historia) "con historia, combinando lags" else if (PARAM$GA$con_historia) "con historia" else "sin historia", "-",
           length(campos_modelo), "campos en la base,", length(vars), "para combinar")
   gramatica <- CreateGrammar(list(
     expr = gsrule("<var><op><var>", "(<var><op><var>)<op><var>"),
