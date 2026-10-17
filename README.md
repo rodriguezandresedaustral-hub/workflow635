@@ -126,6 +126,8 @@ salvo los meses y la regla de la genética):
 | `FT_UNDERSAMPLING` | fracción de CONTINUA en el final train (default 1 = todos) |
 | `KAGGLE_SUBIR=0` | grupo A sin subir a Kaggle (los CSV quedan igual) |
 | `TRF_BUSQUEDAS`, `TRF_MEDIR`, `TRF_TOP` | solo con `GA_MODO=transferencia`: meses de búsqueda, meses donde se vuelve a medir y cuántas fórmulas (20) |
+| `GA_BUSQUEDA` | `gramevol` (default) o `prefiltro`: todas las fórmulas de 2 campos, ver [El prefiltro](#el-prefiltro) |
+| `PF_LISTA`, `PF_SIGUIENTES` | solo con `GA_BUSQUEDA=prefiltro`: cuántas fórmulas pasan al LightGBM (50) y cuántas se vuelven a medir en las rondas 2 y 3 (10) |
 
 **`GA_MODO=transferencia`** no corre el workflow: después del FE intra-mes,
 por cada mes de búsqueda corre una ronda de la genética, toma las 20 mejores
@@ -135,8 +137,12 @@ Responde si lo que elige la genética en un mes sigue sirviendo después, más
 que una fórmula cualquiera, sin pasar por el modelo final. Graba
 `transferencia.txt` (una fila por medición; es también el checkpoint),
 `transferencia_formulas.txt` y `transferencia_resumen.txt`, manda el resumen
-por mail y termina. Con los defaults del grupo A son unas 8 h en
-`to-128ram-12vcpu` (estimado con los ~30 s por fórmula de WF9501).
+por mail y termina. Con los defaults del grupo A fueron unas 4,5 h en
+`to-128ram-12vcpu` (WF9530). Con `GA_CON_HISTORIA=1` corre después del FE
+histórico: la base del fitness ve los lags y tendencias, y cada fórmula entra
+con sus lags y deltas, como en la genética con historia (más lento: el dataset
+es más ancho). Con `GA_COMBINAR_HISTORIA=1` además las fórmulas (y las
+sorteadas) combinan los lags, deltas y tendencias, no solo los campos del mes.
 
 En grupo B la corrida graba además `ganancia_meseta.txt`: el promedio de la
 ganancia en 202107 en los 9 cortes fijos (8.000 a 12.000 envíos). Es la
@@ -148,6 +154,49 @@ público (el desvío de la diferencia entre dos corridas ronda los 7 M). Para
 eso está el [experimento de brazos](brazos/README.md): grupo B, las 10
 semillas asignadas pareadas, sin genética vs. genética (fitness con 6 meses y
 con todos) vs. fórmulas al azar.
+
+## El prefiltro
+
+Con `GA_BUSQUEDA=prefiltro` la genética deja de usar gramEvol y mira **todas**
+las fórmulas de dos campos. gramEvol midió entre 218 y 388 fórmulas distintas
+por ronda (WF9501, WF9530, WF9532), y entre el 56% y el 68% de las que midió
+eran de tres campos. Con historia y `GA_COMBINAR_HISTORIA=1` hay unos 3,5 M de
+fórmulas de dos campos, y 2,7 × 10¹⁰ de tres.
+
+1. **Fitness barato, a todas.** `a + b`, `a * b`, `a - b`, `a / b` y `b / a`
+   para cada par de campos de distinta base (nunca `x` con `x_lag1`), sobre
+   los meses de *entrenamiento* de la muestra de búsqueda, con todos los
+   positivos y 5 CONTINUA por positivo. En cada mes, la fórmula se corta en 31
+   bins (más uno para NA, como LightGBM) y se mide cuánto baja el Brier de
+   predecir con la tasa de su bin. Los bins se estiman en una mitad de las
+   filas y se miden en la otra, así que un corte de ruido empeora. A eso se le
+   resta lo que ya logra un árbol con los dos campos sin la fórmula: lo mejor
+   entre cada campo solo (31 bins) y los dos cortados juntos, uno fino (31) y
+   el otro grueso (6), en las dos direcciones. Queda lo que la fórmula agrega
+   sobre cortar `a` y `b` por separado, como una frontera diagonal. Puntaje:
+   media entre meses menos un error estándar. Mide la fórmula sola, sin sus
+   lags; el LightGBM del paso 3 la mide con sus cuatro derivadas. En
+   paralelo con `mclapply`; el log dice los ms medidos y el tiempo estimado
+   antes de arrancar (WF9550: 3.504.650 fórmulas en 15 min).
+2. **Lista corta.** De las 500 mejores, las `PF_LISTA` (50) que no repiten a
+   una ya elegida: correlación menor a 0,9 en los bins y en lo que predicen
+   (`a + b` y `a - b` arman la misma partición en otro orden). Queda en
+   `prefiltro_<mes>.txt`.
+3. **LightGBM.** Las de la lista se miden con el fitness de siempre en el mes
+   de búsqueda, una vez por cada semilla de `semillas_ruido` (3), contra la
+   base de esa semilla, y la mejora es el promedio. Queda en
+   `prefiltro_medidas.txt` (también es el checkpoint). La ronda 1 mide las 50;
+   las rondas 2 y 3 vuelven a medir las `PF_SIGUIENTES` (10) mejores si entró
+   una ganadora (cambió la base), y si no toman la siguiente sin medir.
+4. El **control** es el mismo, pero las 19 al azar salen del mismo espacio
+   (dos campos de distinta base).
+
+`GA_MODO=transferencia` también lo usa: la búsqueda de cada mes es el
+prefiltro y las `TRF_TOP` mejores son las de la lista medida.
+
+`analisis/ruido_fitness.R` lee `transferencia.txt` o `prefiltro_medidas.txt` y
+separa, por mes, el efecto de cada fórmula del ruido de una medición (ver el
+PR que lo agrega para qué dio con WF9530 y WF9532).
 
 ## Puesta en marcha
 

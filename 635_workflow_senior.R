@@ -144,6 +144,13 @@ PARAM$GA$generaciones  <- as.integer(Sys.getenv("GA_GENERACIONES", "20"))  # gen
 # lag1, lag2, delta1 y delta2 (como la va a ver el modelo final). 0 = antes del
 # FE historico, solo con los campos del mes.
 PARAM$GA$con_historia  <- Sys.getenv("GA_CON_HISTORIA", "0") == "1"
+# GA_COMBINAR_HISTORIA=1 (requiere GA_CON_HISTORIA=1): las formulas combinan
+# tambien los lags, deltas y tendencias, no solo los campos del mes (lo que
+# sugirio Denicolay: la genetica al final, nutriendose de variables que ya son
+# buenas). Las formulas al azar se sortean de la misma lista
+PARAM$GA$combinar_historia <- Sys.getenv("GA_COMBINAR_HISTORIA", "0") == "1"
+if (PARAM$GA$combinar_historia && !PARAM$GA$con_historia)
+  stop("GA_COMBINAR_HISTORIA=1 requiere GA_CON_HISTORIA=1")
 PARAM$GA$mail_cada_gen <- 1     # mail de avance cada N generaciones
 PARAM$GA$horas_max     <- Inf   # sin tope: la genetica corre todas sus rondas y
                                 # generaciones. Con un numero, al llegar a esas horas
@@ -180,6 +187,24 @@ if (length(intersect(PARAM$GA$valida_busqueda, PARAM$GA$valida_control)))
   stop("GA_VALIDA_BUSQUEDA y GA_VALIDA_CONTROL no pueden compartir meses")
 PARAM$GA$undersampling <- as.numeric(env_o("GA_UNDERSAMPLING", "0.2"))   # = training_pct del z635
 PARAM$GA$semillas_ruido <- c(100213, 100313, 100613)
+
+# GA_BUSQUEDA: como se buscan las formulas
+#   gramevol  (default) gramEvol evoluciona formulas con el LightGBM de fitness
+#   prefiltro  todas las formulas de 2 campos (a+b, a*b, a-b, a/b, b/a; nunca dos
+#              versiones del mismo campo, como x y x_lag1) se puntuan con un
+#              fitness barato en los meses de entrenamiento de la busqueda; las
+#              PF_LISTA mejores y poco correlacionadas se miden con el LightGBM
+#              de fitness, con las 3 semillas de semillas_ruido (ver pf_lista)
+PARAM$GA$busqueda <- env_o("GA_BUSQUEDA", "gramevol")
+if (!(PARAM$GA$busqueda %in% c("gramevol", "prefiltro")))
+  stop("GA_BUSQUEDA tiene que ser gramevol o prefiltro")
+PARAM$GA$pf_lista      <- as.integer(env_o("PF_LISTA", "50"))       # formulas que pasan al LightGBM
+PARAM$GA$pf_siguientes <- as.integer(env_o("PF_SIGUIENTES", "10"))  # rondas 2+: se vuelven a medir las mejores N
+PARAM$GA$pf_pozo       <- 500L    # de las mejores pf_pozo por fitness barato se eligen las pf_lista
+PARAM$GA$pf_corr_max   <- 0.9     # correlacion maxima con una ya elegida
+PARAM$GA$pf_negativos  <- 5L      # CONTINUA por cada positivo, por mes, en la muestra barata
+PARAM$GA$pf_bins       <- 31L     # = max_bin del LightGBM de fitness
+PARAM$GA$pf_bins_grueso <- 6L     # bins del campo grueso en la base conjunta
 
 # GA_MODO=transferencia: meses donde busca la genetica (una ronda por mes) y
 # meses donde se vuelven a medir las formulas (solo los posteriores a cada
@@ -364,7 +389,15 @@ GA_PENALIDAD <- -1e12      # mejora de una formula que no se puede evaluar o es 
 miles <- function(x) formatC(x, format= "d", big.mark= ".", decimal.mark= ",")
 
 ga_rondas <- function() {
-  if (file.exists(ARCH_GA_RONDAS)) fread(ARCH_GA_RONDAS, sep= "\t") else
+  # una columna toda NA (rondas cargadas a mano, sin control) fread la lee
+  # como logica y formatC falla: se fuerzan los tipos
+  if (file.exists(ARCH_GA_RONDAS)) {
+    r <- fread(ARCH_GA_RONDAS, sep= "\t")
+    num <- intersect(c("mejora", "umbral", "mejora_control", "p_control"), names(r))
+    r[, (num) := lapply(.SD, as.numeric), .SDcols= num]
+    if ("puesto_control" %in% names(r)) r[, puesto_control := as.integer(puesto_control)]
+    return(r)
+  }
     data.table(ronda= integer(), nombre= character(), formula= character(),
                mejora= numeric(), umbral= numeric(), mejora_control= numeric(),
                puesto_control= integer(), p_control= numeric(),
@@ -425,7 +458,7 @@ ga_ganancia <- function(muestras, formula, semilla) {
 
 # filas de referencia del log (no son formulas de la busqueda): la base de
 # cada ronda, el ruido y el control
-es_referencia <- function(formula) formula == "BASE" | startsWith(formula, "RUIDO_") | startsWith(formula, "CONTROL_")
+es_referencia <- function(formula) formula == "BASE" | startsWith(formula, "BASE_") | startsWith(formula, "RUIDO_") | startsWith(formula, "CONTROL_")
 
 ga_registrar <- function(ronda, formula, ganancia, mejora, segundos) {
   fwrite(data.table(ronda= ronda, formula= formula, ganancia= ganancia, mejora= mejora,
@@ -513,7 +546,9 @@ ga_agregar_a_muestras <- function(nombre, formula) {
 # formulas al azar de la misma gramatica que gramEvol (mitad de 2 campos,
 # mitad de 3), distintas y no constantes en la muestra s. Usa su propia
 # semilla y deja el RNG de R como estaba
-ga_formulas_azar <- function(n, vars, semilla, s) {
+# Con GA_BUSQUEDA=prefiltro las formulas al azar salen del mismo espacio que
+# el prefiltro (2 campos de distinta base), para que el control sea parejo
+ga_formulas_azar <- function(n, vars, semilla, s, pares= PARAM$GA$busqueda == "prefiltro") {
   rng <- if (exists(".Random.seed", envir= globalenv())) get(".Random.seed", envir= globalenv())
   set.seed(semilla, kind = "L'Ecuyer-CMRG")
   ops <- c(" + ", " - ", " * ", " / ")
@@ -523,11 +558,224 @@ ga_formulas_azar <- function(n, vars, semilla, s) {
     intentos <- intentos + 1
     v <- sample(vars, 3, replace= TRUE)
     o <- sample(ops, 2, replace= TRUE)
-    cand <- if (runif(1) < 0.5) paste0(v[1], o[1], v[2]) else paste0("(", v[1], o[1], v[2], ")", o[2], v[3])
+    if (pares && pf_base(v[1]) == pf_base(v[2])) next
+    cand <- if (pares) paste0(v[1], o[1], v[2])
+            else if (runif(1) < 0.5) paste0(v[1], o[1], v[2]) else paste0("(", v[1], o[1], v[2], ")", o[2], v[3])
     if (!(cand %in% f) && !is.null(ga_evaluar_formula(cand, s$datos))) f <- c(f, cand)
   }
   if (!is.null(rng)) assign(".Random.seed", rng, envir= globalenv())
   f
+}
+
+# ===========================================================================
+# PREFILTRO (GA_BUSQUEDA=prefiltro)
+#   1. fitness barato de TODAS las formulas de 2 campos: en cada mes de
+#      entrenamiento de la muestra de busqueda, la formula se corta en
+#      pf_bins bins (+1 para NA, como LightGBM) y se mide cuanto baja el Brier
+#      de predecir la clase con la tasa de su bin. Los bins se estiman en una
+#      mitad de las filas y se miden en la otra: un bin de ruido empeora, asi
+#      que los cortes finos no ganan por azar. A eso se le resta lo que ya
+#      logra un arbol con los dos campos SIN la formula: lo mejor entre cada
+#      campo solo (pf_bins bins) y los dos cortados juntos, uno fino (pf_bins)
+#      y el otro grueso (pf_bins_grueso), en las dos direcciones. Contra el
+#      mejor campo solo, cualquier par de dos campos fuertes parecia agregar
+#      (WF9550: 49 de las 50 eran payroll con consumos). Lo que queda es lo
+#      que la formula agrega sobre cortar a y b por separado, como una
+#      frontera diagonal (a > c * b). Puntaje = media entre meses - un error
+#      estandar.
+#      Nunca mira el mes de busqueda ni el de control: solo su entrenamiento.
+#   2. de las pf_pozo mejores, las pf_lista que no repiten a una ya elegida:
+#      correlacion < pf_corr_max en los bins Y en lo que predicen (a + b y
+#      a - b arman la misma particion en otro orden: bins 0,89, prediccion 0,94)
+#   3. esas se miden con el LightGBM de fitness en el mes de busqueda, con las
+#      3 semillas de semillas_ruido; la mejora es el promedio
+# prefiltro_<mes>.txt   las mejores formulas del paso 1 (checkpoint)
+# prefiltro_medidas.txt una fila por formula x semilla del paso 3 (checkpoint)
+# ===========================================================================
+ARCH_PF_MEDIDAS <- "prefiltro_medidas.txt"
+pf_base <- function(v) sub("_(lag1|lag2|delta1|delta2|tend6)$", "", v)
+
+pf_lista <- function(s, vars, mes) {
+  arch <- sprintf("prefiltro_%d.txt", mes)
+  if (file.exists(arch)) {
+    l <- fread(arch, sep= "\t")
+    loguear("prefiltro: lista de", mes, "ya hecha:", sum(l$elegida), "formulas")
+    return(l[elegida == TRUE])
+  }
+  t0 <- Sys.time()
+  NB <- PARAM$GA$pf_bins
+
+  # muestra barata: meses de entrenamiento de la busqueda, todos los positivos
+  # y pf_negativos CONTINUA por positivo en cada mes
+  set.seed(PARAM$semilla_primigenia + mes + 7, kind = "L'Ecuyer-CMRG")
+  tr <- which(!s$es_valid)
+  meses_tr <- s$datos$foto_mes[tr]
+  y_tr <- s$label[tr]
+  filas <- unlist(lapply(sort(unique(meses_tr)), function(m) {
+    pos <- tr[meses_tr == m & y_tr == 1L]
+    neg <- tr[meses_tr == m & y_tr == 0L]
+    c(pos, neg[sample.int(length(neg), min(length(neg), PARAM$GA$pf_negativos * length(pos)))])
+  }))
+  y <- s$label[filas]
+  mes_i <- match(s$datos$foto_mes[filas], sort(unique(meses_tr))) - 1L
+  k <- max(mes_i) + 1L
+  n <- length(filas)
+  cols <- lapply(vars, function(v) as.numeric(s$datos[[v]][filas]))
+  names(cols) <- vars
+  # sin campos constantes en la muestra
+  utiles <- vapply(cols, function(x) length(unique(x[!is.na(x)])) > 1, TRUE)
+  cols <- cols[utiles]
+  vars <- vars[utiles]
+
+  mitad <- runif(n) < 0.5
+  iA <- which(mitad); iB <- which(!mitad)
+  yA1 <- iA[y[iA] == 1L]; yB1 <- iB[y[iB] == 1L]
+  pm <- tabulate(mes_i[y == 1L] + 1L, k) / tabulate(mes_i + 1L, k)
+  nB <- tabulate(mes_i[iB] + 1L, k)
+  sub_q <- sample.int(n, min(n, 6000L))
+  NC <- PARAM$GA$pf_bins_grueso
+
+  binear <- function(f, nbins= NB) {
+    cortes <- unique(quantile(f[sub_q], seq_len(nbins - 1L) / nbins, na.rm= TRUE, names= FALSE, type= 1))
+    b <- findInterval(f, cortes, left.open= TRUE) + 1L
+    b[is.na(b)] <- 0L
+    b
+  }
+  # baja del Brier por mes (fuera de muestra) de predecir con la tasa de cada
+  # celda (0..L-1), estimada en la mitad A y medida en la B. Vector de largo k
+  pm_L <- list()
+  puntaje_celdas <- function(celda, L) {
+    if (is.null(pm_L[[as.character(L)]])) pm_L[[as.character(L)]] <<- pm[rep(seq_len(k), each= L)]
+    pmL <- pm_L[[as.character(L)]]
+    idx <- mes_i * L + celda + 1L
+    totA <- tabulate(idx[iA], k * L); posA <- tabulate(idx[yA1], k * L)
+    totB <- tabulate(idx[iB], k * L); posB <- tabulate(idx[yB1], k * L)
+    p <- (posA + 10 * pmL) / (totA + 10)
+    d <- posB * ((1 - pmL)^2 - (1 - p)^2) + (totB - posB) * (pmL^2 - p^2)
+    colSums(matrix(d, ncol= k)) / nB
+  }
+  puntaje_meses <- function(f) puntaje_celdas(binear(f), NB + 2L)
+  # lo que predice una formula en cada fila: para ver si repite a otra
+  prediccion <- function(f) {
+    idx <- mes_i * (NB + 2L) + binear(f) + 1L
+    pmL <- pm[rep(seq_len(k), each= NB + 2L)]
+    ((tabulate(idx[yA1], k * (NB + 2L)) + 10 * pmL) / (tabulate(idx[iA], k * (NB + 2L)) + 10))[idx]
+  }
+  # igual que ga_evaluar_formula: Inf -> NA, NaN -> 0
+  aplicar <- function(a, b, op) {
+    f <- switch(op, a + b, a * b, a - b, a / b, b / a)
+    f[is.infinite(f)] <- NA
+    f[is.nan(f)] <- 0
+    f
+  }
+  texto <- function(i, j, op) ifelse(op == 5L, paste0(vars[j], " / ", vars[i]),
+    paste0(vars[i], c(" + ", " * ", " - ", " / ")[pmin(op, 4L)], vars[j]))
+
+  solos <- vapply(cols, puntaje_meses, numeric(k))   # k x campos
+  finos <- lapply(cols, binear)
+  gruesos <- lapply(cols, binear, NC)
+  # los dos campos cortados juntos, uno fino y el otro grueso
+  conjunta <- function(i, j) {
+    L <- (NB + 1L) * (NC + 1L)
+    pmax(puntaje_celdas(finos[[i]] * (NC + 1L) + gruesos[[j]], L),
+         puntaje_celdas(finos[[j]] * (NC + 1L) + gruesos[[i]], L))
+  }
+
+  # todos los pares de campos de distinta base
+  base <- pf_base(vars)
+  pares <- combn(length(vars), 2)
+  pares <- pares[, base[pares[1, ]] != base[pares[2, ]], drop= FALSE]
+  loguear("prefiltro:", mes, "-", n, "filas en", k, "meses,", length(vars), "campos,",
+          ncol(pares), "pares,", 5 * ncol(pares), "formulas")
+
+  puntuar <- function(cs) {
+    out <- matrix(NA_real_, nrow= 5L * length(cs), ncol= 4L)
+    r <- 0L
+    for (q in cs) {
+      i <- pares[1, q]; j <- pares[2, q]
+      techo <- pmax(solos[, i], solos[, j], conjunta(i, j))
+      for (op in 1:5) {
+        inc <- puntaje_meses(aplicar(cols[[i]], cols[[j]], op)) - techo
+        r <- r + 1L
+        out[r, ] <- c(i, j, op, mean(inc) - sd(inc) / sqrt(k))
+      }
+    }
+    out
+  }
+
+  # medir antes de multiplicar: 40 pares (200 formulas) en serie
+  t_m <- system.time(puntuar(seq_len(min(40L, ncol(pares)))))[["elapsed"]]
+  nucleos <- parallel::detectCores()
+  loguear(sprintf("prefiltro: %.2f ms por formula en un nucleo -> ~%.0f min en %d nucleos (estimado)",
+                  1000 * t_m / 200, t_m / 200 * 5 * ncol(pares) / nucleos / 60, nucleos))
+  mandar_mail(sprintf("prefiltro %d: arranca", mes), hilo= "iteraciones",
+    sprintf("%d formulas, %.2f ms cada una en un nucleo, ~%.0f min estimados en %d nucleos.",
+            5L * ncol(pares), 1000 * t_m / 200, t_m / 200 * 5 * ncol(pares) / nucleos / 60, nucleos))
+
+  tandas <- split(seq_len(ncol(pares)), ceiling(seq_len(ncol(pares)) / 2000))
+  res <- parallel::mclapply(tandas, puntuar, mc.cores= nucleos, mc.preschedule= FALSE)
+  fallas <- vapply(res, function(x) !is.matrix(x), TRUE)
+  if (any(fallas)) stop("prefiltro: fallaron ", sum(fallas), " tandas: ", as.character(res[fallas][[1]]))
+  res <- as.data.table(do.call(rbind, res))
+  setnames(res, c("ia", "ib", "op", "puntaje"))
+  setorder(res, -puntaje)
+
+  # pozo -> lista corta poco correlacionada
+  pozo <- head(res[is.finite(puntaje)], PARAM$GA$pf_pozo)
+  pozo[, formula := texto(ia, ib, op)]
+  pozo[, elegida := FALSE]
+  elegidas_bins <- list(); elegidas_pred <- list()
+  repite <- function(x, lista) length(lista) &&
+    max(abs(vapply(lista, function(e) suppressWarnings(cor(e, x)), 0)), na.rm= TRUE) >= PARAM$GA$pf_corr_max
+  for (r in seq_len(nrow(pozo))) {
+    f <- aplicar(cols[[pozo$ia[r]]], cols[[pozo$ib[r]]], pozo$op[r])
+    b <- binear(f)
+    if (length(unique(b)) < 2) next
+    pr <- prediccion(f)
+    if (repite(b, elegidas_bins) || repite(pr, elegidas_pred)) next
+    elegidas_bins[[length(elegidas_bins) + 1L]] <- b
+    elegidas_pred[[length(elegidas_pred) + 1L]] <- pr
+    pozo$elegida[r] <- TRUE
+    if (length(elegidas_bins) >= PARAM$GA$pf_lista) break
+  }
+  pozo[, puesto := .I]
+  fwrite(pozo[, .(puesto, formula, puntaje, elegida)], arch, sep= "\t")
+  mins <- as.numeric(difftime(Sys.time(), t0, units= "mins"))
+  loguear(sprintf("prefiltro: %d listo en %.0f min; %d elegidas, la mejor %s (%.6f)",
+                  mes, mins, sum(pozo$elegida), pozo$formula[1], pozo$puntaje[1]))
+  mandar_mail(sprintf("prefiltro %d: listo (%.0f min)", mes, mins), hilo= "iteraciones",
+    paste0("Las ", sum(pozo$elegida), " elegidas para medir con LightGBM:\n",
+           paste(sprintf("  %.6f  %s", pozo[elegida == TRUE, puntaje], pozo[elegida == TRUE, formula]),
+                 collapse= "\n")))
+  pozo[elegida == TRUE, .(puesto, formula, puntaje, elegida)]
+}
+
+# mide formulas con el LightGBM de fitness en GA$busqueda, una vez por semilla
+# de semillas_ruido contra la base de esa semilla. Devuelve la mejora promedio
+# por formula, de mayor a menor, y la registra en genetica_log.txt
+pf_medir <- function(r, formulas) {
+  hechas <- if (file.exists(ARCH_PF_MEDIDAS)) fread(ARCH_PF_MEDIDAS, sep= "\t") else data.table()
+  ya <- if (nrow(hechas)) paste(hechas$ronda, hechas$formula, hechas$semilla) else character()
+  for (sem in PARAM$GA$semillas_ruido) {
+    base <- ga_medir(paste0(r, " BASE_semilla_", sem), function() ga_ganancia(GA$busqueda, NULL, sem))
+    for (f in formulas) {
+      if (paste(r, f, sem) %in% ya) next
+      t0 <- Sys.time()
+      g <- ga_ganancia(GA$busqueda, f, sem)
+      fwrite(data.table(ronda= r, formula= f, semilla= sem, ganancia= g, base= base, mejora= g - base,
+                        segundos= round(as.numeric(difftime(Sys.time(), t0, units= "secs")), 1),
+                        fecha= format(Sys.time(), "%Y-%m-%d %H:%M:%S")),
+             ARCH_PF_MEDIDAS, sep= "\t", append= file.exists(ARCH_PF_MEDIDAS))
+    }
+    loguear("prefiltro: ronda", r, "semilla", sem, "medida")
+  }
+  m <- fread(ARCH_PF_MEDIDAS, sep= "\t")[ronda == r & formula %in% formulas,
+         .(mejora= mean(mejora), sd_semillas= sd(mejora), segundos= sum(segundos)), by= formula]
+  m[is.na(mejora), mejora := GA_PENALIDAD]
+  for (i in seq_len(nrow(m)))
+    if (is.null(GA$cache[[paste(r, m$formula[i])]]))
+      ga_registrar(r, m$formula[i], NA_real_, m$mejora[i], m$segundos[i])
+  m[order(-mejora)]
 }
 
 # la funcion de costo de gramEvol (minimiza): -(mejora en ganancia en la busqueda)
@@ -618,8 +866,9 @@ correr_genetica <- function() {
   numericas <- names(dataset)[sapply(dataset, is.numeric)]
   campos_modelo <- setdiff(numericas, "numero_de_cliente")
   vars <- setdiff(numericas, c("numero_de_cliente", "foto_mes"))
-  # con historia, se combinan solo los campos del mes (no los lags ni tendencias)
-  if (PARAM$GA$con_historia) vars <- intersect(GA_CAMPOS_MES, vars)
+  # con historia, se combinan solo los campos del mes (no los lags ni tendencias),
+  # salvo con GA_COMBINAR_HISTORIA=1
+  if (PARAM$GA$con_historia && !PARAM$GA$combinar_historia) vars <- intersect(GA_CAMPOS_MES, vars)
 
   # muestras del fitness: la de busqueda solo hace falta si hay genetica
   GA$busqueda <- if (PARAM$GA$modo == "genetica") lapply(PARAM$GA$valida_busqueda, ga_muestra, campos_modelo) else list()
@@ -666,23 +915,43 @@ correr_genetica <- function() {
       fwrite(fila, ARCH_GA_RONDAS, sep= "\t", append= file.exists(ARCH_GA_RONDAS))
     } else {
       GA$base <- ga_medir(paste0(r, " BASE"), function() ga_ganancia(GA$busqueda, NULL, PARAM$semilla_primigenia))
-      set.seed(PARAM$semilla_primigenia + r, kind = "L'Ecuyer-CMRG")
       corto <- FALSE
-      ge <- tryCatch(
-        GrammaticalEvolution(gramatica, ga_costo,
-          optimizer= "ga", popSize= PARAM$GA$poblacion, iterations= PARAM$GA$generaciones,
-          monitorFunc= ga_monitor, disable.warnings= TRUE),
-        ga_tope= function(e) { corto <<- TRUE; NULL })
-      if (corto) {
-        # se llego al tope: la mejor formula medida en la ronda
-        l <- fread(ARCH_GA_LOG, sep= "\t")[ronda == r & !es_referencia(formula)]
-        if (!nrow(l)) { loguear("genetica: tope de horas antes de medir formulas en la ronda", r); break }
-        mejor <- l[which.max(mejora), formula]
-        mejora <- max(l$mejora)
-        loguear("genetica: tope de", PARAM$GA$horas_max, "h alcanzado en la ronda", r)
+      if (PARAM$GA$busqueda == "prefiltro") {
+        # la lista se arma una vez; la ronda 1 mide todas y las siguientes
+        # vuelven a medir las PF_SIGUIENTES mejores de la ronda anterior (si
+        # entro una ganadora, la base cambio). Si no entro ninguna, la base es
+        # la misma: se toma la siguiente sin volver a medir
+        if (is.null(GA$lista)) GA$lista <- pf_lista(GA$busqueda[[1]], vars, PARAM$GA$valida_busqueda[1])
+        cand <- setdiff(GA$lista$formula, ga_rondas()$formula)
+        if (r == 1) {
+          m <- pf_medir(r, cand)
+        } else {
+          medidas <- fread(ARCH_PF_MEDIDAS, sep= "\t")[formula %in% cand]
+          ronda_previa <- max(medidas$ronda)
+          previa <- medidas[ronda == ronda_previa, .(mejora= mean(mejora)), by= formula][order(-mejora)]
+          m <- if (any(ga_rondas()[ronda >= ronda_previa, aceptada]))
+                 pf_medir(r, head(previa$formula, PARAM$GA$pf_siguientes)) else previa
+        }
+        mejor <- m$formula[1]
+        mejora <- m$mejora[1]
       } else {
-        mejor <- as.character(ge$best$expressions)
-        mejora <- -ge$best$cost
+        set.seed(PARAM$semilla_primigenia + r, kind = "L'Ecuyer-CMRG")
+        ge <- tryCatch(
+          GrammaticalEvolution(gramatica, ga_costo,
+            optimizer= "ga", popSize= PARAM$GA$poblacion, iterations= PARAM$GA$generaciones,
+            monitorFunc= ga_monitor, disable.warnings= TRUE),
+          ga_tope= function(e) { corto <<- TRUE; NULL })
+        if (corto) {
+          # se llego al tope: la mejor formula medida en la ronda
+          l <- fread(ARCH_GA_LOG, sep= "\t")[ronda == r & !es_referencia(formula)]
+          if (!nrow(l)) { loguear("genetica: tope de horas antes de medir formulas en la ronda", r); break }
+          mejor <- l[which.max(mejora), formula]
+          mejora <- max(l$mejora)
+          loguear("genetica: tope de", PARAM$GA$horas_max, "h alcanzado en la ronda", r)
+        } else {
+          mejor <- as.character(ge$best$expressions)
+          mejora <- -ge$best$cost
+        }
       }
       ctl <- ga_control(r, mejor, vars)
       fila <- data.table(ronda= r, nombre= sprintf("gen_%02d", r), formula= mejor,
@@ -825,9 +1094,15 @@ correr_transferencia <- function() {
     ya <<- c(ya, clave)
   }
 
+  # con historia, lo mismo que correr_genetica: orden antes de las muestras y
+  # solo los campos del mes para combinar (la base ve los lags y tendencias)
+  if (PARAM$GA$con_historia) setorder(dataset, numero_de_cliente, foto_mes)
   numericas <- names(dataset)[sapply(dataset, is.numeric)]
   campos_modelo <- setdiff(numericas, "numero_de_cliente")
   vars <- setdiff(numericas, c("numero_de_cliente", "foto_mes"))
+  if (PARAM$GA$con_historia && !PARAM$GA$combinar_historia) vars <- intersect(GA_CAMPOS_MES, vars)
+  loguear("transferencia:", if (PARAM$GA$combinar_historia) "con historia, combinando lags" else if (PARAM$GA$con_historia) "con historia" else "sin historia", "-",
+          length(campos_modelo), "campos en la base,", length(vars), "para combinar")
   gramatica <- CreateGrammar(list(
     expr = gsrule("<var><op><var>", "(<var><op><var>)<op><var>"),
     op   = gsrule(" + ", " - ", " * ", " / "),
@@ -844,12 +1119,18 @@ correr_transferencia <- function() {
     GA$ronda <- b
     GA$busqueda <- list(ga_muestra(b, campos_modelo))
     GA$base <- ga_medir(paste0(b, " BASE"), function() ga_ganancia(GA$busqueda, NULL, PARAM$semilla_primigenia))
-    set.seed(PARAM$semilla_primigenia + b, kind = "L'Ecuyer-CMRG")
-    GrammaticalEvolution(gramatica, ga_costo,
-      optimizer= "ga", popSize= PARAM$GA$poblacion, iterations= PARAM$GA$generaciones,
-      monitorFunc= ga_monitor, disable.warnings= TRUE)
-    log_b <- fread(ARCH_GA_LOG, sep= "\t")[ronda == b & !es_referencia(formula) & mejora > GA_PENALIDAD / 2]
-    log_b <- unique(log_b[order(-mejora)], by= "formula")
+    if (PARAM$GA$busqueda == "prefiltro") {
+      # la lista corta del prefiltro, medida con LightGBM y 3 semillas en b
+      log_b <- pf_medir(b, pf_lista(GA$busqueda[[1]], vars, b)$formula)
+      log_b <- log_b[mejora > GA_PENALIDAD / 2]
+    } else {
+      set.seed(PARAM$semilla_primigenia + b, kind = "L'Ecuyer-CMRG")
+      GrammaticalEvolution(gramatica, ga_costo,
+        optimizer= "ga", popSize= PARAM$GA$poblacion, iterations= PARAM$GA$generaciones,
+        monitorFunc= ga_monitor, disable.warnings= TRUE)
+      log_b <- fread(ARCH_GA_LOG, sep= "\t")[ronda == b & !es_referencia(formula) & mejora > GA_PENALIDAD / 2]
+      log_b <- unique(log_b[order(-mejora)], by= "formula")
+    }
     top <- head(log_b, PARAM$TRF$top)
     azar <- ga_formulas_azar(PARAM$TRF$top, vars, PARAM$semilla_primigenia + 3000 + b %% 10000, GA$busqueda[[1]])
     cand <- data.table(tipo= c(rep("GA", nrow(top)), rep("AZAR", length(azar))),
@@ -895,6 +1176,17 @@ correr_transferencia <- function() {
     }
   }
   trf_resumen()
+}
+
+# corre la transferencia, manda el resumen y termina (no sigue el workflow).
+# Sin historia va despues del FE intra-mes; con historia, despues del historico
+terminar_transferencia <- function() {
+  etapa("transferencia de la genetica")
+  resumen_trf <- correr_transferencia()
+  fin_etapa(resumen_trf)
+  mandar_mail("TERMINO (transferencia)", resumen_trf)
+  writeLines(format(Sys.time()), "TERMINADO")
+  quit(save= "no", status= 0)
 }
 
 # GRUPO A: Kaggle se prepara y se prueba al arrancar. Si no anda, avisa por
@@ -1644,14 +1936,7 @@ AgregarVariables_IntraMes(dataset)
     GA_CAMPOS_MES <- setdiff(names(dataset)[sapply(dataset, is.numeric)],
                              c("numero_de_cliente", "foto_mes"))
 
-    if (PARAM$GA$modo == "transferencia") {
-      etapa("transferencia de la genetica")
-      resumen_trf <- correr_transferencia()
-      fin_etapa(resumen_trf)
-      mandar_mail("TERMINO (transferencia)", resumen_trf)
-      writeLines(format(Sys.time()), "TERMINADO")
-      quit(save= "no", status= 0)
-    }
+    if (PARAM$GA$modo == "transferencia" && !PARAM$GA$con_historia) terminar_transferencia()
 
     if (PARAM$GA$modo != "nada" && !PARAM$GA$con_historia) {
       etapa("FE genetico")
@@ -1878,6 +2163,11 @@ if( PARAM$FE_hist$Tendencias$run) {
 }
 
     fin_etapa()
+
+    # con historia, la transferencia corre aca, despues del FE historico. Termina
+    # antes del checkpoint: si la VM se cae, rehace el FE y retoma desde
+    # genetica_log.txt y transferencia.txt
+    if (PARAM$GA$modo == "transferencia" && PARAM$GA$con_historia) terminar_transferencia()
 
     if (PARAM$GA$modo != "nada" && PARAM$GA$con_historia) {
       etapa("FE genetico")
@@ -2599,13 +2889,20 @@ crear_modelo_final <- function( sem ) {
     if( primero)
     {
       primero <<- FALSE
-      tb_importancia <- as.data.table(lgb.importance(final_model))
       archivo_importancia <- "impo.txt"
-
-      fwrite( tb_importancia,
-        file= archivo_importancia,
-        sep= "\t"
-      )
+      # con modelos muy grandes (WF9541: 2.581 arboles de 4.087 hojas, 1 GB)
+      # lgb.importance arma un texto de mas de 2 GB y R corta. La importancia es
+      # informativa: si falla, se anota y el final training sigue
+      tryCatch({
+        tb_importancia <- as.data.table(lgb.importance(final_model))
+        fwrite( tb_importancia,
+          file= archivo_importancia,
+          sep= "\t"
+        )
+      }, error= function(e) {
+        loguear("sin importancia de variables:", conditionMessage(e))
+        writeLines(paste("sin importancia de variables:", conditionMessage(e)), archivo_importancia)
+      })
     }
 
     rm(final_model)
