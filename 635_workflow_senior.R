@@ -204,6 +204,7 @@ PARAM$GA$pf_pozo       <- 500L    # de las mejores pf_pozo por fitness barato se
 PARAM$GA$pf_corr_max   <- 0.9     # correlacion maxima con una ya elegida
 PARAM$GA$pf_negativos  <- 5L      # CONTINUA por cada positivo, por mes, en la muestra barata
 PARAM$GA$pf_bins       <- 31L     # = max_bin del LightGBM de fitness
+PARAM$GA$pf_bins_grueso <- 6L     # bins del campo grueso en la base conjunta
 
 # GA_MODO=transferencia: meses donde busca la genetica (una ronda por mes) y
 # meses donde se vuelven a medir las formulas (solo los posteriores a cada
@@ -573,12 +574,19 @@ ga_formulas_azar <- function(n, vars, semilla, s, pares= PARAM$GA$busqueda == "p
 #      pf_bins bins (+1 para NA, como LightGBM) y se mide cuanto baja el Brier
 #      de predecir la clase con la tasa de su bin. Los bins se estiman en una
 #      mitad de las filas y se miden en la otra: un bin de ruido empeora, asi
-#      que los cortes finos no ganan por azar. A eso se le resta lo mismo para
-#      el mejor de sus dos campos solo: lo que queda es lo que la COMBINACION
-#      agrega. Puntaje = media entre meses - un error estandar.
+#      que los cortes finos no ganan por azar. A eso se le resta lo que ya
+#      logra un arbol con los dos campos SIN la formula: lo mejor entre cada
+#      campo solo (pf_bins bins) y los dos cortados juntos, uno fino (pf_bins)
+#      y el otro grueso (pf_bins_grueso), en las dos direcciones. Contra el
+#      mejor campo solo, cualquier par de dos campos fuertes parecia agregar
+#      (WF9550: 49 de las 50 eran payroll con consumos). Lo que queda es lo
+#      que la formula agrega sobre cortar a y b por separado, como una
+#      frontera diagonal (a > c * b). Puntaje = media entre meses - un error
+#      estandar.
 #      Nunca mira el mes de busqueda ni el de control: solo su entrenamiento.
-#   2. de las pf_pozo mejores, las pf_lista con correlacion < pf_corr_max con
-#      las ya elegidas
+#   2. de las pf_pozo mejores, las pf_lista que no repiten a una ya elegida:
+#      correlacion < pf_corr_max en los bins Y en lo que predicen (a + b y
+#      a - b arman la misma particion en otro orden: bins 0,89, prediccion 0,94)
 #   3. esas se miden con el LightGBM de fitness en el mes de busqueda, con las
 #      3 semillas de semillas_ruido; la mejora es el promedio
 # prefiltro_<mes>.txt   las mejores formulas del paso 1 (checkpoint)
@@ -620,31 +628,38 @@ pf_lista <- function(s, vars, mes) {
   vars <- vars[utiles]
 
   mitad <- runif(n) < 0.5
-  nb <- k * (NB + 2L)
-  bin_mes <- rep(seq_len(k), each= NB + 2L)
-  offs <- mes_i * (NB + 2L) + 1L
   iA <- which(mitad); iB <- which(!mitad)
   yA1 <- iA[y[iA] == 1L]; yB1 <- iB[y[iB] == 1L]
   pm <- tabulate(mes_i[y == 1L] + 1L, k) / tabulate(mes_i + 1L, k)
-  pmb <- pm[bin_mes]
   nB <- tabulate(mes_i[iB] + 1L, k)
   sub_q <- sample.int(n, min(n, 6000L))
-  probs <- seq_len(NB - 1L) / NB
+  NC <- PARAM$GA$pf_bins_grueso
 
-  binear <- function(f) {
-    cortes <- unique(quantile(f[sub_q], probs, na.rm= TRUE, names= FALSE, type= 1))
+  binear <- function(f, nbins= NB) {
+    cortes <- unique(quantile(f[sub_q], seq_len(nbins - 1L) / nbins, na.rm= TRUE, names= FALSE, type= 1))
     b <- findInterval(f, cortes, left.open= TRUE) + 1L
     b[is.na(b)] <- 0L
     b
   }
-  # baja del Brier por mes (fuera de muestra), vector de largo k
-  puntaje_meses <- function(f) {
-    idx <- offs + binear(f)
-    totA <- tabulate(idx[iA], nb); posA <- tabulate(idx[yA1], nb)
-    totB <- tabulate(idx[iB], nb); posB <- tabulate(idx[yB1], nb)
-    p <- (posA + 10 * pmb) / (totA + 10)
-    d <- posB * ((1 - pmb)^2 - (1 - p)^2) + (totB - posB) * (pmb^2 - p^2)
+  # baja del Brier por mes (fuera de muestra) de predecir con la tasa de cada
+  # celda (0..L-1), estimada en la mitad A y medida en la B. Vector de largo k
+  pm_L <- list()
+  puntaje_celdas <- function(celda, L) {
+    if (is.null(pm_L[[as.character(L)]])) pm_L[[as.character(L)]] <<- pm[rep(seq_len(k), each= L)]
+    pmL <- pm_L[[as.character(L)]]
+    idx <- mes_i * L + celda + 1L
+    totA <- tabulate(idx[iA], k * L); posA <- tabulate(idx[yA1], k * L)
+    totB <- tabulate(idx[iB], k * L); posB <- tabulate(idx[yB1], k * L)
+    p <- (posA + 10 * pmL) / (totA + 10)
+    d <- posB * ((1 - pmL)^2 - (1 - p)^2) + (totB - posB) * (pmL^2 - p^2)
     colSums(matrix(d, ncol= k)) / nB
+  }
+  puntaje_meses <- function(f) puntaje_celdas(binear(f), NB + 2L)
+  # lo que predice una formula en cada fila: para ver si repite a otra
+  prediccion <- function(f) {
+    idx <- mes_i * (NB + 2L) + binear(f) + 1L
+    pmL <- pm[rep(seq_len(k), each= NB + 2L)]
+    ((tabulate(idx[yA1], k * (NB + 2L)) + 10 * pmL) / (tabulate(idx[iA], k * (NB + 2L)) + 10))[idx]
   }
   # igual que ga_evaluar_formula: Inf -> NA, NaN -> 0
   aplicar <- function(a, b, op) {
@@ -657,6 +672,14 @@ pf_lista <- function(s, vars, mes) {
     paste0(vars[i], c(" + ", " * ", " - ", " / ")[pmin(op, 4L)], vars[j]))
 
   solos <- vapply(cols, puntaje_meses, numeric(k))   # k x campos
+  finos <- lapply(cols, binear)
+  gruesos <- lapply(cols, binear, NC)
+  # los dos campos cortados juntos, uno fino y el otro grueso
+  conjunta <- function(i, j) {
+    L <- (NB + 1L) * (NC + 1L)
+    pmax(puntaje_celdas(finos[[i]] * (NC + 1L) + gruesos[[j]], L),
+         puntaje_celdas(finos[[j]] * (NC + 1L) + gruesos[[i]], L))
+  }
 
   # todos los pares de campos de distinta base
   base <- pf_base(vars)
@@ -670,7 +693,7 @@ pf_lista <- function(s, vars, mes) {
     r <- 0L
     for (q in cs) {
       i <- pares[1, q]; j <- pares[2, q]
-      techo <- pmax(solos[, i], solos[, j])
+      techo <- pmax(solos[, i], solos[, j], conjunta(i, j))
       for (op in 1:5) {
         inc <- puntaje_meses(aplicar(cols[[i]], cols[[j]], op)) - techo
         r <- r + 1L
@@ -701,13 +724,17 @@ pf_lista <- function(s, vars, mes) {
   pozo <- head(res[is.finite(puntaje)], PARAM$GA$pf_pozo)
   pozo[, formula := texto(ia, ib, op)]
   pozo[, elegida := FALSE]
-  elegidas_bins <- list()
+  elegidas_bins <- list(); elegidas_pred <- list()
+  repite <- function(x, lista) length(lista) &&
+    max(abs(vapply(lista, function(e) suppressWarnings(cor(e, x)), 0)), na.rm= TRUE) >= PARAM$GA$pf_corr_max
   for (r in seq_len(nrow(pozo))) {
-    b <- binear(aplicar(cols[[pozo$ia[r]]], cols[[pozo$ib[r]]], pozo$op[r]))
+    f <- aplicar(cols[[pozo$ia[r]]], cols[[pozo$ib[r]]], pozo$op[r])
+    b <- binear(f)
     if (length(unique(b)) < 2) next
-    if (length(elegidas_bins) &&
-        max(abs(vapply(elegidas_bins, function(e) suppressWarnings(cor(e, b)), 0)), na.rm= TRUE) >= PARAM$GA$pf_corr_max) next
+    pr <- prediccion(f)
+    if (repite(b, elegidas_bins) || repite(pr, elegidas_pred)) next
     elegidas_bins[[length(elegidas_bins) + 1L]] <- b
+    elegidas_pred[[length(elegidas_pred) + 1L]] <- pr
     pozo$elegida[r] <- TRUE
     if (length(elegidas_bins) >= PARAM$GA$pf_lista) break
   }
