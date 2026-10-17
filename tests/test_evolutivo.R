@@ -1,8 +1,10 @@
 # Prueba chica del FE evolutivo con un dataset sintetico (segundos, no datos reales):
 #   Rscript tests/test_evolutivo.R 635_workflow_senior.R
 # Saca del script el bloque del evolutivo (entre "ARCH_EV_GEN <-" y el
-# comentario de Kaggle) a un archivo temporal, lo carga con source() y lo
-# corre con stubs de PARAM, loguear y mandar_mail.
+# comentario de Kaggle) y fganancia_lgbm_meseta (z635 celda 65) a archivos
+# temporales, los carga con source() y los corre con stubs de PARAM, loguear
+# y mandar_mail. PARAM$CN$train es el de la catedra (celda 67): la importancia
+# sale del LightGBM de canaritos.
 suppressMessages({ library(data.table); library(lightgbm) })
 args <- commandArgs(trailingOnly= TRUE)
 script <- normalizePath(if (length(args)) args[1] else "635_workflow_senior.R")
@@ -14,6 +16,10 @@ stopifnot(length(desde) == 1, length(hasta) == 1, hasta > desde)
 dir <- tempfile("ev_test_"); dir.create(file.path(dir, "checkpoints"), recursive= TRUE); setwd(dir)
 bloque <- file.path(dir, "bloque_evolutivo.R")
 writeLines(lin[desde:hasta], bloque)
+c65 <- grep("^# --- z635 celda 65 ---", lin); c66 <- grep("^# --- z635 celda 66 ---", lin)
+stopifnot(length(c65) == 1, length(c66) == 1, c66 > c65)
+bloque_cn <- file.path(dir, "celda65.R")
+writeLines(lin[c65:(c66 - 1)], bloque_cn)
 
 loguear <- function(...) cat(format(Sys.time(), "%H:%M:%S"), "|", ..., "\n")
 MAILS <- 0; mandar_mail <- function(...) MAILS <<- MAILS + 1
@@ -21,16 +27,17 @@ GRUPO <- "B"
 PARAM <- list(semilla_primigenia= 100213, ganancia= list(acierto= 975000, error= -25000),
   BO= list(ht_fijo= ""), GA= list(modo= "evolutivo"),
   EV= list(seleccion= "importancia", generaciones= 4L, tope= 0L, hijos= 1, clones= 0.1, presion= 10,
-           semillas_n= 1L, alfa= 0.95, borrar_muertas= TRUE, valida= 202101L, ventana= 3L,
-           undersampling= 0.5, param_bo= TRUE, mail_cada_gen= 1,
-           lgb_param= list(objective= "binary", num_iterations= 30, learning_rate= 0.1, num_leaves= 15,
-             min_data_in_leaf= 20, feature_fraction= 0.8, max_bin= 31, force_row_wise= TRUE,
-             deterministic= TRUE, verbosity= -100, num_threads= 2)))
+           semillas_n= 1L, borrar_muertas= TRUE, mail_cada_gen= 1),
+  CN= list(train= list(clase01_valor1= c("BAJA+2", "BAJA+1"), positivos= c("BAJA+2"),
+    training= c(202101, 202102, 202103), validation= c(202105), undersampling= 0.1,
+    gan1= 0.975, gan0= -0.025)))
+source(bloque_cn)
 source(bloque)
 
-# dataset: 7 meses x 3000 clientes, 20 variables; la BAJA depende de v1*v2 y v3/v4
+# dataset: 6 meses x 3000 clientes, 20 variables; la BAJA depende de v1*v2 y v3/v4.
+# Incluye los meses de canaritos (202101-202103 y 202105)
 set.seed(1)
-meses <- c(202007:202012, 202101)
+meses <- c(202012, 202101, 202102, 202103, 202104, 202105)
 dataset <- rbindlist(lapply(meses, function(m) {
   d <- data.table(numero_de_cliente= 1:3000, foto_mes= m)
   for (j in 1:20) d[, (paste0("v", j)) := rnorm(.N)]
@@ -66,6 +73,7 @@ ok(!any(muertas %in% names(dataset)), "las originales muertas salieron del datas
 f <- pob[original == FALSE][1]
 if (nrow(f)) ok(isTRUE(all.equal(dataset[[f$nombre]], ev_evaluar(f$formula, dataset0))), "formula recalculada en el dataset entero")
 ok(MAILS == 4, "un mail por generacion")
+ok(all(gen$ganancia_meseta != 0), "la ganancia sale de la validation de canaritos (202105)")
 ok(inherits(try(ev_evaluar("system('ls')", dataset), silent= TRUE), "try-error"), "ev_evaluar no ejecuta codigo")
 
 # retomar: con el checkpoint en la ultima generacion no reentrena nada

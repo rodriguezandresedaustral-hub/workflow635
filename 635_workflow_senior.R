@@ -135,8 +135,11 @@ PARAM$FE_rf$run <- TRUE
 # --- FE evolutivo (v3, PR 8) -------------------------------------------------
 # La poblacion son TODAS las columnas del dataset (despues del FE historico y
 # del de random forest). Cada generacion:
-#   1. un LightGBM (con los hiperparametros de la BO si hay HT_FIJO) entrena
-#      con toda la poblacion y da la importancia de cada columna
+#   1. el LightGBM de canaritos de la catedra (z635 celda 66: sus mismos
+#      parametros, entrena 202101-202103 con el 10% de los CONTINUA y valida
+#      202105 con early stopping sobre la ganancia meseta) entrena con toda la
+#      poblacion y da la importancia (Gain) de cada columna. No hay un LightGBM
+#      propio del evolutivo: el que decide por importancia es el de la catedra
 #   2. nacen EV_HIJOS hijos  padre1 op padre2  (op en + - * /). Los padres se
 #      sortean con probabilidad segun el puesto en la importancia (seleccion
 #      por ranking lineal: el primero es EV_PRESION veces mas probable que el
@@ -170,41 +173,7 @@ PARAM$EV$hijos        <- as.numeric(env_o("EV_HIJOS", "1"))     # hijos por gene
 PARAM$EV$clones       <- as.numeric(env_o("EV_CLONES", "0.1"))  # fraccion de los nacimientos que son clones
 PARAM$EV$presion      <- as.numeric(env_o("EV_PRESION", "10"))  # el mejor puesto es X veces mas probable que el peor
 PARAM$EV$semillas_n   <- as.integer(env_o("EV_SEMILLAS_N", "1"))  # LightGBM por generacion (importancia promedio)
-PARAM$EV$alfa         <- as.numeric(env_o("EV_ALFA", "1"))      # peso alfa^k del mes k antes del ultimo de training
 PARAM$EV$borrar_muertas <- env_o("EV_BORRAR_MUERTAS", "1") == "1"   # 1: las originales muertas salen del dataset
-# meses del fitness: ni la BO ni el testing. Se entrena con los EV_VENTANA
-# meses anteriores al de validacion (dejando uno de gap) y el EV_UNDERSAMPLING
-# de los CONTINUA. Para experimentos rapidos: EV_VENTANA=1, EV_UNDERSAMPLING=0.1
-leer_meses <- function(variable, defecto) {
-  v <- Sys.getenv(variable, "")
-  if (v == "") defecto else as.integer(strsplit(v, ",")[[1]])
-}
-PARAM$EV$valida      <- leer_meses("EV_VALIDA", if (GRUPO == "A") 202103 else 202101)
-PARAM$EV$ventana     <- as.integer(env_o("EV_VENTANA", "3"))   # 0 = todos los meses desde 201901
-PARAM$EV$undersampling <- as.numeric(env_o("EV_UNDERSAMPLING", "0.2"))
-prohibidos <- if (GRUPO == "A") c(202107, 202109) else c(202105, 202107)
-if (length(PARAM$EV$valida) != 1 || PARAM$EV$valida %in% prohibidos)
-  stop("EV_VALIDA tiene que ser un mes y no puede ser ", paste(prohibidos, collapse= " ni "),
-       " (validacion de la BO y testing del grupo ", GRUPO, ")")
-# el fitness tiene que parecerse al modelo final: con HT_FIJO se usan los
-# hiperparametros de la mejor fila de esa BO (EV_PARAM_BO=0 para no usarlos).
-# Sin HT_FIJO, estos (los de la v2, un LightGBM chico)
-PARAM$EV$param_bo <- env_o("EV_PARAM_BO", "1") == "1"
-PARAM$EV$lgb_param <- list(
-  objective= "binary",
-  num_iterations= 200,
-  learning_rate= 0.065,
-  num_leaves= 60,
-  min_data_in_leaf= 260,
-  feature_fraction= 0.5,
-  bagging_fraction= 0.8,
-  bagging_freq= 1,
-  max_bin= 31,
-  force_row_wise= TRUE,
-  deterministic= TRUE,
-  verbosity= -100,
-  num_threads= parallel::detectCores()
-)
 # canaritos: con el evolutivo no se corre (achica el dataset a ~450 columnas y
 # eso es justo lo que no queremos). CN_RUN=1 lo prende igual
 PARAM$CN$run <- env_o("CN_RUN", if (PARAM$GA$modo == "evolutivo") "0" else "1") == "1"
@@ -359,7 +328,6 @@ CK_EV <- "checkpoints/evolutivo.rds"
 # columnas que no son variables (no entran a la poblacion)
 EV_NO_VARIABLES <- c("numero_de_cliente", "foto_mes", "clase_ternaria", "clase01",
                      "entrenamiento", "azar", "fold_train", "fold_final_train")
-EV_MESES <- c(201901:201912, 202001:202012, 202101:202112)
 
 miles <- function(x) formatC(round(x), format= "d", big.mark= ".", decimal.mark= ",")
 
@@ -387,70 +355,75 @@ ev_evaluar <- function(formula, tabla) {
   calcular(str2lang(formula))
 }
 
-# meses de entrenamiento del fitness: los EV_VENTANA anteriores al mes de
-# validacion dejando uno de gap (0 = todos desde 201901)
-ev_meses_train <- function(mes) {
-  i <- match(mes, EV_MESES)
-  desde <- if (PARAM$EV$ventana > 0) max(1, i - 1 - PARAM$EV$ventana) else 1
-  EV_MESES[desde:(i - 2)]
-}
-
-# la muestra del fitness: los meses de entrenamiento con el EV_UNDERSAMPLING
-# de los CONTINUA, mas el mes de validacion completo. Usa su propia semilla
-ev_muestra <- function(mes, originales) {
+# la muestra de la importancia: la misma que arma CanaritosAsesinos (z635
+# celda 66) con PARAM$CN$train (celda 67): training en PARAM$CN$train$training
+# con todos los BAJA+1/BAJA+2 y el PARAM$CN$train$undersampling de los
+# CONTINUA, validation en PARAM$CN$train$validation, peso 1.0000001 a los
+# BAJA+2 (asi fganancia_lgbm_meseta los reconoce). El sorteo del
+# undersampling usa su propia semilla y deja el RNG como estaba (las
+# canaritos de la catedra, que aca no se agregan, consumen numeros antes)
+ev_muestra <- function(originales) {
   s <- new.env()
   rng <- get0(".Random.seed", envir= globalenv())
-  set.seed(PARAM$semilla_primigenia + mes, kind = "L'Ecuyer-CMRG")
+  set.seed(PARAM$semilla_primigenia, kind = "L'Ecuyer-CMRG")
   azar <- runif(nrow(dataset))
   if (!is.null(rng)) assign(".Random.seed", rng, envir= globalenv())
-  positivos <- c("BAJA+1", "BAJA+2")
-  train <- ev_meses_train(mes)
-  filas <- (dataset$foto_mes %in% train &
-             (dataset$clase_ternaria %in% positivos | azar < PARAM$EV$undersampling)) |
-           dataset$foto_mes == mes
-  s$datos <- dataset[filas, c("foto_mes", "clase_ternaria", originales), with= FALSE]
-  s$es_valid <- s$datos$foto_mes == mes
-  s$label <- as.integer(s$datos$clase_ternaria %in% positivos)
+  cn <- PARAM$CN$train
+  uno <- dataset$clase_ternaria %in% cn$clase01_valor1
+  entrena <- dataset$foto_mes %in% cn$training & (uno | azar < cn$undersampling)
+  valida <- dataset$foto_mes %in% cn$validation
+  s$datos <- dataset[entrena | valida, c("foto_mes", "clase_ternaria", originales), with= FALSE]
+  s$es_valid <- s$datos$foto_mes %in% cn$validation
+  s$label <- as.integer(s$datos$clase_ternaria %in% cn$clase01_valor1)
+  s$peso <- ifelse(s$datos$clase_ternaria %in% cn$positivos, 1.0000001, 1.0)
   s$gan_valid <- ifelse(s$datos$clase_ternaria[s$es_valid] == "BAJA+2",
                         PARAM$ganancia$acierto, PARAM$ganancia$error)
-  # pesos temporales alfa^k: k = meses antes del ultimo mes de entrenamiento
-  k <- max(match(train, EV_MESES)) - match(s$datos$foto_mes[!s$es_valid], EV_MESES)
-  s$peso <- PARAM$EV$alfa ^ k
-  loguear("evolutivo: muestra - entrena", paste(range(train), collapse= "-"),
-          "con", sum(!s$es_valid), "filas, valida", mes, "con", sum(s$es_valid))
+  loguear("evolutivo: muestra de canaritos - entrena", paste(range(cn$training), collapse= "-"),
+          "con", sum(!s$es_valid), "filas, valida", paste(cn$validation, collapse= ","),
+          "con", sum(s$es_valid))
   s
 }
 
-# los hiperparametros del fitness: los de la BO de HT_FIJO si hay (como el
-# modelo final), si no los de PARAM$EV$lgb_param
-ev_param <- function() {
-  p <- PARAM$EV$lgb_param
-  if (PARAM$EV$param_bo && nzchar(PARAM$BO$ht_fijo)) {
-    b <- fread(PARAM$BO$ht_fijo)[order(-y)][1]
-    p$num_iterations <- round(2^b$num_iterations)
-    p$num_leaves <- round(2^b$num_leaves)
-    p$learning_rate <- 2^b$learning_rate
-    p$feature_fraction <- b$feature_fraction
-    p$min_sum_hessian_in_leaf <- 2^b$min_sum_hessian_in_leaf
-    p$min_data_in_leaf <- 0
-    p$bagging_fraction <- 1
-    p$bagging_freq <- 0
-  }
-  p
-}
+# los parametros del LightGBM de CanaritosAsesinos (z635 celda 66), copiados
+# tal cual; la semilla se pone en cada entrenamiento
+ev_param <- function() list(
+  objective = "binary",
+  metric = "custom",
+  first_metric_only = TRUE,
+  boost_from_average = TRUE,
+  feature_pre_filter = FALSE,
+  verbosity = -100,
+  max_depth = -1,
+  min_gain_to_split = 0.0,
+  lambda_l1 = 0.0,
+  lambda_l2 = 0.0,
+  max_bin = 31,
+  num_iterations = 9999,
+  force_row_wise = TRUE,
+  learning_rate = 0.065,
+  feature_fraction = 1.0,
+  min_data_in_leaf = 260,
+  num_leaves = 60,
+  early_stopping_rounds = 200,
+  num_threads = 1
+)
 
-# entrena con las columnas de V (env nombre -> vector) y devuelve la
-# importancia (Gain; 0 si no se uso) y la ganancia en el mes de validacion:
-# meseta (promedio de las 500 mejores ganancias acumuladas) y maximo de la curva
+# entrena el LightGBM de canaritos con las columnas de V (env nombre -> vector)
+# y devuelve la importancia (Gain; 0 si no se uso) y la ganancia en la
+# validation: meseta (promedio de las 500 mejores ganancias acumuladas) y
+# maximo de la curva
 ev_entrenar <- function(nombres, V, s, semillas) {
   X <- do.call(cbind, mget(nombres, envir= V))
   colnames(X) <- nombres
   res <- lapply(semillas, function(sem) {
     dtr <- lgb.Dataset(X[!s$es_valid, , drop= FALSE], label= s$label[!s$es_valid],
-                       weight= s$peso, free_raw_data= TRUE)
+                       weight= s$peso[!s$es_valid], free_raw_data= FALSE)
+    dva <- lgb.Dataset(X[s$es_valid, , drop= FALSE], label= s$label[s$es_valid],
+                       weight= s$peso[s$es_valid], free_raw_data= FALSE)
     p <- EV$param
     p$seed <- sem
-    m <- lgb.train(data= dtr, params= p, verbose= -100)
+    m <- lgb.train(data= dtr, valids= list(valid= dva), eval= fganancia_lgbm_meseta,
+                   param= p, verbose= -100)
     gan_acum <- cumsum(s$gan_valid[order(-predict(m, X[s$es_valid, , drop= FALSE]))])
     im <- as.data.table(lgb.importance(m))
     imp <- setNames(rep(0, length(nombres)), nombres)
@@ -501,9 +474,10 @@ correr_evolutivo <- function() {
   semillas <- PARAM$semilla_primigenia + seq_len(PARAM$EV$semillas_n) - 1
   loguear("evolutivo:", length(originales), "originales, tope", tope, ", por generacion",
           n_hijos - n_clones, "hijos y", n_clones, "clones, seleccion", PARAM$EV$seleccion,
-          ", fitness con", EV$param$num_iterations, "arboles de", EV$param$num_leaves, "hojas")
+          ", importancia con el LightGBM de canaritos (", EV$param$num_leaves, "hojas, early stopping",
+          EV$param$early_stopping_rounds, ")")
 
-  s <- ev_muestra(PARAM$EV$valida, originales)
+  s <- ev_muestra(originales)
   V <- new.env()
   for (n in originales) assign(n, as.numeric(s$datos[[n]]), envir= V)
 
@@ -696,7 +670,10 @@ mandar_mail("arranco",
            ", ", PARAM$EV$generaciones, " generaciones, tope ",
            if (PARAM$EV$tope > 0) PARAM$EV$tope else "columnas iniciales",
            ", clones ", PARAM$EV$clones, ", presion ", PARAM$EV$presion,
-           ", fitness valida ", PARAM$EV$valida, " (ventana ", PARAM$EV$ventana, ")"), "\n",
+           ", importancia con el LightGBM de canaritos (entrena ",
+           paste(range(PARAM$CN$train$training), collapse= "-"), ", valida ",
+           paste(PARAM$CN$train$validation, collapse= ","), ")"), "
+",
          "Canaritos: ", if (PARAM$CN$run) "si" else "no", ", FT_ALFA ", PARAM$FT$alfa, "\n",
          if (nzchar(PARAM$BO$ht_fijo)) paste0("HT fijo: ", PARAM$BO$ht_fijo, "\n"),
          "Final train: undersampling ", PARAM$FT$undersampling, " de los CONTINUA\n",
@@ -1780,15 +1757,6 @@ AgregaVarRandomForest()
   # columna; sin canaritos llegaria al modelo como una variable mas
   if ("entrenamiento" %in% names(dataset)) dataset[, entrenamiento := NULL]
 
-  # v3: el FE evolutivo trabaja con todo lo que hay (intra-mes, historico y
-  # random forest): esa es la poblacion inicial, y su tamano el tope
-  if (PARAM$GA$modo == "evolutivo") {
-    etapa("FE evolutivo")
-    resumen_ev <- correr_evolutivo()
-    fin_etapa(resumen_ev)
-  }
-
-  etapa("canaritos")
 # --- z635 celda 65 ---
 VPOS_CORTE <- c()
 
@@ -1959,6 +1927,18 @@ PARAM$CN$train$undersampling <- 0.1
 PARAM$CN$train$gan1 <- 0.975
 PARAM$CN$train$gan0 <- -0.025
 
+  # v3: el FE evolutivo trabaja con todo lo que hay (intra-mes, historico y
+  # random forest): esa es la poblacion inicial, y su tamano el tope.
+  # v4: va despues de las celdas 65 a 67 porque su importancia sale del
+  # LightGBM de canaritos (fganancia_lgbm_meseta y PARAM$CN$train), y antes
+  # de la llamada de la celda 68
+  if (PARAM$GA$modo == "evolutivo") {
+    etapa("FE evolutivo")
+    resumen_ev <- correr_evolutivo()
+    fin_etapa(resumen_ev)
+  }
+
+  etapa("canaritos")
   # v3: CN_RUN=0 (por defecto con el evolutivo) no corta: el dataset queda
   # del tamano que tiene
   if (PARAM$CN$run) {

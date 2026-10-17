@@ -56,11 +56,12 @@ quién se reproduce y quién muere.
 
 Cada generación (`GA_MODO=evolutivo`):
 
-1. **Fitness representativo:** un LightGBM con los hiperparámetros de la
-   mejor fila de la BO de `HT_FIJO` (los mismos que el modelo final; sin
-   `HT_FIJO`, uno chico) entrena con **todas** las columnas vivas y da la
-   importancia (gain) de cada una y la ganancia en el mes de validación del
-   fitness (A: 202103, B: 202101; nunca el de la BO ni el testing).
+1. **Importancia:** el LightGBM de canaritos de la cátedra (z635 celda 66,
+   con sus mismos parámetros, meses y undersampling de la celda 67: entrena
+   202101-202103 con el 10 % de los CONTINUA y valida 202105 con early
+   stopping sobre la ganancia meseta) entrena con **todas** las columnas
+   vivas y da la importancia (gain) de cada una. El evolutivo no tiene un
+   LightGBM propio. La ganancia en 202105 queda en el registro.
 2. **Reproducción:** nacen `EV_HIJOS × tope` hijos `padre1 op padre2`
    (`op` en `+ − × /`, con NaN → 0 e Inf → NA en cada operación). Los padres
    se sortean con probabilidad según su puesto en la importancia (ranking
@@ -87,7 +88,7 @@ prende igual).
 
 | Archivo | Qué |
 |---|---|
-| `evolutivo_generaciones.txt` | una fila por generación: población al inicio, candidatos, población al final, nacidas, clones, revividas, muertas, **originales vivas**, generadas vivas, profundidad máxima y media, fracción de hijos con padres de generaciones distintas, **fórmulas nacidas acumuladas**, % de la importancia que tienen las generadas, ganancia del fitness (meseta y máximo) y segundos |
+| `evolutivo_generaciones.txt` | una fila por generación: población al inicio, candidatos, población al final, nacidas, clones, revividas, muertas, **originales vivas**, generadas vivas, profundidad máxima y media, fracción de hijos con padres de generaciones distintas, **fórmulas nacidas acumuladas**, % de la importancia que tienen las generadas, ganancia en la validation de canaritos (meseta y máximo) y segundos |
 | `evolutivo_nacimientos.txt` | cada hijo y cada clon: fórmula, padres y generación de cada padre |
 | `evolutivo_poblacion.txt` | la población final con su importancia |
 | `checkpoints/evolutivo.rds` | el estado al final de cada generación: si la VM se corta, retoma desde ahí |
@@ -107,11 +108,6 @@ cuántas generadas usa el modelo final y en qué puestos.
 | `EV_CLONES` | 0.1 | fracción de los nacimientos que son clones |
 | `EV_PRESION` | 10 | cuántas veces más probable es el primero de la importancia que el último |
 | `EV_SEMILLAS_N` | 1 | LightGBM por generación (importancia promediada) |
-| `EV_VALIDA` | A 202103, B 202101 | mes de validación del fitness |
-| `EV_VENTANA` | 3 | meses de entrenamiento del fitness antes del de validación, con 1 de gap (0 = todos desde 201901) |
-| `EV_UNDERSAMPLING` | 0.2 | fracción de CONTINUA en el fitness |
-| `EV_ALFA` | 1 | pesos `alfa^k` por mes en el fitness |
-| `EV_PARAM_BO` | 1 | 0: fitness con el LightGBM chico aunque haya `HT_FIJO` |
 | `EV_BORRAR_MUERTAS` | 1 | 0: las originales muertas quedan en el dataset |
 | `CN_RUN` | 0 con evolutivo, 1 sin | correr canaritos |
 | `FT_ALFA` | 1 | pesos `alfa^k` por mes en el final train (k = meses antes del último); la clase sugirió 0.95 |

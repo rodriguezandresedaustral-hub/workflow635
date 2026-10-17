@@ -33,7 +33,7 @@ defecto: 100213, 271211, 100313, 353161, 100613, 487757, 100913, 641371,
 101113 y 823541. Más semillas: `SEMILLAS="..."`.
 
 Lo que no se compara está fijo en todos los brazos: HT fija (`HT_FIJO`, la BO
-de WF9600; el fitness del evolutivo también usa esos hiperparámetros), final
+de WF9600; la importancia del evolutivo sale del LightGBM de canaritos), final
 train de 3 semillas con el 20% de los CONTINUA, sin mail y sin Kaggle. Ojo:
 esa BO se hizo con el dataset después de canaritos (~450 columnas); en E5–E8
 el modelo ve ~1.100–1.200.
@@ -45,9 +45,6 @@ de un brazo nuevo:
 
 ```
 EV_GENERACIONES=3
-EV_VENTANA=1           # el fitness entrena con 1 mes
-EV_UNDERSAMPLING=0.1
-EV_PARAM_BO=0          # LightGBM chico en el fitness en vez de los de la BO
 FT_SEMILLAS_N=1
 ```
 
