@@ -371,7 +371,15 @@ GA_PENALIDAD <- -1e12      # mejora de una formula que no se puede evaluar o es 
 miles <- function(x) formatC(x, format= "d", big.mark= ".", decimal.mark= ",")
 
 ga_rondas <- function() {
-  if (file.exists(ARCH_GA_RONDAS)) fread(ARCH_GA_RONDAS, sep= "\t") else
+  # una columna toda NA (rondas cargadas a mano, sin control) fread la lee
+  # como logica y formatC falla: se fuerzan los tipos
+  if (file.exists(ARCH_GA_RONDAS)) {
+    r <- fread(ARCH_GA_RONDAS, sep= "\t")
+    num <- intersect(c("mejora", "umbral", "mejora_control", "p_control"), names(r))
+    r[, (num) := lapply(.SD, as.numeric), .SDcols= num]
+    if ("puesto_control" %in% names(r)) r[, puesto_control := as.integer(puesto_control)]
+    return(r)
+  }
     data.table(ronda= integer(), nombre= character(), formula= character(),
                mejora= numeric(), umbral= numeric(), mejora_control= numeric(),
                puesto_control= integer(), p_control= numeric(),
@@ -2622,13 +2630,20 @@ crear_modelo_final <- function( sem ) {
     if( primero)
     {
       primero <<- FALSE
-      tb_importancia <- as.data.table(lgb.importance(final_model))
       archivo_importancia <- "impo.txt"
-
-      fwrite( tb_importancia,
-        file= archivo_importancia,
-        sep= "\t"
-      )
+      # con modelos muy grandes (WF9541: 2.581 arboles de 4.087 hojas, 1 GB)
+      # lgb.importance arma un texto de mas de 2 GB y R corta. La importancia es
+      # informativa: si falla, se anota y el final training sigue
+      tryCatch({
+        tb_importancia <- as.data.table(lgb.importance(final_model))
+        fwrite( tb_importancia,
+          file= archivo_importancia,
+          sep= "\t"
+        )
+      }, error= function(e) {
+        loguear("sin importancia de variables:", conditionMessage(e))
+        writeLines(paste("sin importancia de variables:", conditionMessage(e)), archivo_importancia)
+      })
     }
 
     rm(final_model)
