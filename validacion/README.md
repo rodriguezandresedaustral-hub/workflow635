@@ -28,11 +28,14 @@ ya estaban en el bucket: 70 corridas de brazos del grupo B con la clase real de 
      semillas, en el 90 %.
    - Con el public real (202109) pasa lo mismo: acierta el signo de E2−E0 en 1 de 3 semillas, mientras
      que 202107 da E2 > E0 en las 3.
-4. **La BO elige entre configuraciones indistinguibles.**
-   - Las 7 mejores AUC de WF9600 están dentro de 0,0025, contra un error estándar del kriging de 0,013 a
-     0,027.
-   - La mejor quedó pegada a los techos: 1023 árboles y 2038 hojas.
-   - La BO optimiza AUC y no ganancia. Cuánto se pierde por eso en 202107 se mide en §2.5 (**en curso**).
+4. **La BO ordena bien en grueso, pero elige entre configuraciones indistinguibles.**
+   - Reentrenamos las 50 configuraciones de WF9600 y las medimos en 202107. La Spearman entre la AUC de la
+     BO (202105) y la meseta en 202107 es 0,75.
+   - La elegida queda 5.ª de 50: 584,4 M contra 601,7 M de la mejor (regret 17 M). Descontando el sesgo
+     del ganador (~7 M), la pérdida real es de ~10 M: más que las diferencias entre brazos (~3 M).
+   - Optimizar la ganancia en 202105 en lugar de la AUC no ayuda (Spearman 0,74; la elegida cae 17.ª).
+   - Lo que más separa a 202107 de la AUC en 202105 es `feature_fraction`: las 4 mejores en 202107 tienen
+     entre 0,05 y 0,25, y la elegida tiene 0,85.
 5. **Hay un solo leakage, y no toca 202107.** Canaritos hace early stopping en 202105, que en el grupo B
    es el mes de validación de la BO. 202107 queda limpio como holdout.
 
@@ -194,18 +197,69 @@ E0A/E2A del grupo A contra E0/E2 del grupo B, con 3 semillas del pipeline (meset
 
 ### 2.5 ¿La BO elige bien? (`reevaluar_bo.R` + `analizar_reevaluacion.R`)
 
-**En curso.** La reevaluación de las 50 configuraciones de WF9600 (3 vistas × 2 semillas, ~6 h en
-desktop-jr) corre ahora; esta sección se completa con un commit en este mismo PR.
+Reentrenamos las 50 configuraciones de `BO_log.txt` de WF9600 sobre el dataset con FE y canaritos de una
+corrida E0 de main (WF9950_s100213, con los checkpoints). Usamos 2 semillas (100213 y 271211) y 3 vistas:
 
-Lo que ya se ve en `BO_log.txt` de WF9600:
+| Vista | Training | Gap | Mide en | Undersampling |
+|---|---|---|---|---|
+| V03 | 201901–202101 | 202102 | 202103 | 0,2 |
+| V05 | 201901–202103 | 202104 | 202105 (= la BO del grupo B) | 0,2 |
+| T07 | 201901–202105 | 202106 | 202107 (= el final train de los brazos) | 0,2 |
 
-- La AUC de las 7 mejores va de 0,93761 a 0,93516 (0,0025). El error estándar que el kriging le asignaba al
-  proponer cada punto es de 0,013 a 0,027: la BO no puede distinguir entre ellas y la que queda primera depende
-  del azar de la semilla.
-- 5 de las 7 mejores tienen `num_iterations` ≥ 2^9,97 (techo 2^10) y 3 tienen `num_leaves` ≥ 2^10,9
-  (techo 2^11). El óptimo en AUC está probablemente fuera del rango.
-- No se registró la ganancia de ninguna configuración, así que con lo que había no se podía saber si
-  ordenar por AUC en 202105 ordena por ganancia en 202107. Eso es lo que mide `reevaluar_bo.R`.
+Son 300 modelos, unas 6 h en desktop-jr. V03 está algo contaminada, porque FE_rf y canaritos entrenan con
+202101–202103. Salidas en `resultados/reevaluacion_bo.txt`, `resultados/detalle_bo.txt` y los dos CSV.
+
+**La semilla no es el problema.** Para una misma configuración, la Spearman de la meseta entre las dos
+semillas es 0,90–0,94 y el sd medio es de 4,5–6,5 M. Entre configuraciones la meseta cambia unos 180–270 M.
+El orden lo deciden los hiperparámetros.
+
+**Qué criterio de validación predice mejor la meseta en 202107** (promedio de las 2 semillas):
+
+| Criterio | Spearman vs T07 | Puesto en T07 de la elegida | Regret (M) | Media T07 del top 5 |
+|---|---|---|---|---|
+| AUC de la BO original (202105, 1 semilla) | 0,75 | 5 | 17,3 | 582,4 |
+| AUC 202105 (V05, 2 semillas) | 0,75 | 7 | 21,7 | 577,0 |
+| Meseta 202105 (V05) | 0,74 | 17 | 30,5 | 582,4 |
+| Máximo 202105 (V05) | 0,74 | 8 | 22,8 | 575,0 |
+| AUC 202103 (V03) | 0,80 | 7 | 21,7 | 577,4 |
+| Meseta 202103 (V03) | 0,82 | 7 | 21,7 | 577,2 |
+| Meseta promedio 202103 + 202105 | 0,80 | 7 | 21,7 | 577,6 |
+| AUC 202107 (techo: el propio mes) | 0,89 | 7 | 21,7 | 583,8 |
+
+La meseta de 202107 va de 329,7 a 601,7 M, con mediana 561,9 M.
+
+- **El orden grueso se transfiere.** La AUC de la BO separa bien las configuraciones malas de las
+  buenas: con Spearman 0,75, las 7 primeras de la BO están todas por encima de la mediana salvo una. En
+  promedio dan 575,7 M, contra 588,6 M de las 7 mejores de verdad.
+- **La elección final es casi una lotería entre las ~10 primeras.**
+  - De las 7 mejores AUC, en 202107 la 4.ª (config 4) queda 2.ª y la 7.ª queda 34.ª.
+  - Ningún criterio acierta la mejor de 202107 (config 24), ni siquiera la AUC del propio 202107.
+  - Parte del regret de 17 M es ruido. Por la semilla, la config 24 le gana a la 1 por 13,0 y 21,6 M.
+  - Pero si las 10 primeras fueran iguales, la mejor medida en 202107 saldría ~7 M arriba solo por ruido
+    de semilla, sin contar el ruido de mes de §2.2.
+- **Optimizar ganancia en lugar de AUC no ayuda.** La meseta de 202105 correlaciona igual que la AUC
+  (0,74 contra 0,75) y su elegida cae 17.ª. En 202105 la curva alcanza el máximo cerca de los 7.800
+  envíos, contra 11.650 en 202107, así que la meseta 8000–12000 mide en 202105 otra parte de la curva.
+  La AUC no depende del corte y es menos ruidosa.
+- **Validar en otro mes mejora poco.** V03, o el promedio de V03 y V05, sube la Spearman de 0,75 a
+  0,80–0,82, pero elige la misma configuración. No justifica duplicar el costo de la BO.
+- **`feature_fraction` es donde 202105 y 202107 no coinciden.**
+
+  | Hiperparámetro | Spearman con la meseta T07 | Spearman con la AUC V05 |
+  |---|---|---|
+  | `feature_fraction` | −0,16 | +0,20 |
+  | `num_leaves` | +0,53 | +0,35 |
+  | `learning_rate` | −0,51 | −0,35 |
+  | `num_iterations` | +0,48 | +0,66 |
+
+  - La mejor en 202107 (config 24) tiene `feature_fraction` 0,05, que es el piso del rango, con 1000
+    árboles, 1782 hojas y `learning_rate` 0,023.
+  - Las siguientes tres tienen 0,25, 0,09 y 0,07. La elegida por la BO, 5.ª, tiene 0,85.
+  - Con meses más lejanos, columnas más aleatorias generalizan mejor que lo que premia la AUC del mes de
+    validación.
+  - `num_iterations` está en el techo o cerca (947 a 1023 árboles, techo 2^10) en 4 de las 5 mejores de
+    202107. El techo se puede subir
+    con `BO_TECHO_LOG2_ITERACIONES`.
 
 ## 3. Riesgos
 
@@ -214,7 +268,7 @@ Lo que ya se ve en `BO_log.txt` de WF9600:
 | 1 | Concluir con Wilcoxon entre semillas sobre un solo mes de testing | §2.2: IC con mes incluido cruza 0 para E2 y E4 | **alta**: hoy es la regla de decisión |
 | 2 | Elegir con el public (semillas, ensambles, corte) | §2.3 y §2.4: Spearman 0,12; signo al azar por semilla | **alta** |
 | 3 | Usar el máximo de la curva como métrica (PR 8) | §2.1: señal/ruido 4 veces peor; optimista en 10–12 M | media |
-| 4 | La BO optimiza AUC y no ganancia; top‑AUC indistinguibles; pegada a techos | §2.5 | media (ver §2.5) |
+| 4 | La BO elige entre top‑AUC indistinguibles y premia `feature_fraction` alto; pegada al techo de árboles | §2.5: regret ~10–17 M en 202107, puesto 5 de 50 | media: el orden grueso sirve (Spearman 0,75), la elección fina no |
 | 5 | Leakage de selección: canaritos hace early stopping en 202105 = validate de la BO del grupo B (`PARAM$CN$train$validation`) | código | baja: infla la AUC de la BO, no toca 202107 ni 202109 |
 | 6 | Reutilizar 202107 para elegir *y* reportar (elegir el brazo que más dio en 202107 y reportar esa ganancia) | selección entre 5 brazos | media: el ganador está sesgado para arriba unos M |
 | 7 | Transferir `num_iterations` de un training con undersampling 0,2 a un final train con `FT_UNDERSAMPLING=1` (el default) | código | media si se usa el default; los brazos usan 0,2 y no aplica |
@@ -230,7 +284,7 @@ Lo que ya se ve en `BO_log.txt` de WF9600:
 - `bootstrap_brazos.R`: IC de la diferencia de medias entre brazos con ruido de semilla **y** de mes.
   Debería reemplazar al Wilcoxon como regla para decir "el brazo X es mejor".
 - `comparar_public.R`: public real (grupo A) contra 202107 (grupo B), mismo brazo y semilla.
-- `reevaluar_bo.R` y `analizar_reevaluacion.R`: reentrenan las configuraciones de la BO en 202103,
+- `reevaluar_bo.R`, `analizar_reevaluacion.R` y `detalle_bo.R`: reentrenan las configuraciones de la BO en 202103,
   202105 y 202107 y miden qué criterio de validación predice la ganancia en 202107.
 - `resultados/`: las salidas de esta corrida.
 
@@ -246,11 +300,20 @@ Lo que ya se ve en `BO_log.txt` de WF9600:
    la meseta; el corte final sale del grupo A.
 4. **No elegir con el public**: ni semillas, ni ensambles, ni corte entre opciones a menos de ~5 M.
    Si se usa, solo para confirmar diferencias grandes.
-5. **BO**: según §2.5.
+5. **BO** (§2.5):
+   - Seguir optimizando AUC en 202105. La ganancia en 202105 no predice mejor, y validar en dos meses
+     tampoco cambia la elegida.
+   - No quedarse con la primera de la BO. Llevar las 5 primeras al final train y promediarlas
+     (semillerío de configuraciones). Su media en 202107 (582,4 M) está a la par de la elegida (584,4 M)
+     y es mucho menos dependiente de la suerte de cuál salió primera.
+   - Probar `feature_fraction` fijo en 0,05–0,25, o bajar el techo del rango, y subir
+     `BO_TECHO_LOG2_ITERACIONES` a 11.
+   - Medir cualquiera de estos cambios como un brazo más, con la regla 1, y no eligiendo con 202107 lo
+     mismo que después se reporta en 202107 (riesgo 6).
 
 ## 5. Cómo correr
 
-Los tres scripts corren en la VM como `ds` (el bucket solo lo lee `ds`), desde `/tmp`.
+Los scripts corren en la VM como `ds` (el bucket solo lo lee `ds`), desde `/tmp`.
 
 **Curvas de 202107.** Unos 50 minutos para 70 corridas con B_BOOT=500 y R_PUBLIC=500.
 
@@ -272,6 +335,7 @@ unas 6 h para 50 configuraciones × 3 vistas × 2 semillas en 12 vCPU. Retoma so
 Rscript validacion/reevaluar_bo.R /home/ds/buckets/b1/exp/WF9950_s100213/checkpoints/dataset_canaritos.fst \
   /home/ds/buckets/b1/exp/WF9600/BO_log.txt /home/ds/buckets/b1/exp/validacion_bo
 Rscript validacion/analizar_reevaluacion.R /home/ds/buckets/b1/exp/validacion_bo/reevaluacion.csv
+Rscript validacion/detalle_bo.R /home/ds/buckets/b1/exp/validacion_bo/reevaluacion.csv
 ```
 
 Las salidas de esta corrida están en `validacion/resultados/`.
