@@ -40,10 +40,10 @@
 #   * poblacion de tamano fijo (EV_TOPE, por defecto las columnas con las que
 #     llega el dataset): nacen hijos de cruzar dos columnas de CUALQUIER
 #     generacion, mueren otras tantas; no se busca una super-variable
-#   * padres y sobrevivientes se sortean con probabilidad segun el puesto en
-#     la importancia de un LightGBM con los hiperparametros de la BO (HT_FIJO)
-#   * operador clon (Highlander): X+cero, X*uno con X original
-#   * evolutivo_generaciones.txt: tamano, nacidas, muertas, originales vivas
+#   * la importancia sale del LightGBM de canaritos de la catedra: pasa igual
+#     (X * 1) toda variable que el modelo uso, original o formula, y los
+#     padres de los hijos se sortean por el puesto en la importancia
+#   * evolutivo_generaciones.txt: tamano, usadas, copias, nacidas, originales vivas
 #   * canaritos apagado por defecto con el evolutivo (CN_RUN)
 #   * FT_ALFA: pesos alfa^k por mes en el final train
 #   * los brazos se comparan con Wilcoxon apareado sobre el
@@ -140,28 +140,29 @@ PARAM$FE_rf$run <- TRUE
 #      202105 con early stopping sobre la ganancia meseta) entrena con toda la
 #      poblacion y da la importancia (Gain) de cada columna. No hay un LightGBM
 #      propio del evolutivo: el que decide por importancia es el de la catedra
-#   2. nacen EV_HIJOS hijos  padre1 op padre2  (op en + - * /). Los padres se
-#      sortean con probabilidad segun el puesto en la importancia (seleccion
-#      por ranking lineal: el primero es EV_PRESION veces mas probable que el
-#      ultimo; ninguno tiene probabilidad 0). Los padres pueden ser de
-#      cualquier generacion: una nacida en la 1 se cruza con una de la 5
-#   3. operador clon (Highlander): EV_CLONES de los nacimientos son
-#      X + cero  o  X * uno  con X una variable ORIGINAL. Las constantes cero y
-#      uno nunca tienen importancia, asi que entran por esta regla forzada y no
-#      por el sorteo. Un clon de una original viva la salva de morir en esta
-#      generacion; un clon de una original muerta la revive
-#   4. muerte: de poblacion + hijos sobreviven EV_TOPE columnas, sorteadas sin
-#      reposicion con la misma probabilidad por ranking (no se corta por un
-#      umbral). La poblacion no baja de EV_TOPE: no se buscan super-variables
-#   El tope por defecto es la cantidad de columnas con la que llega el dataset
-#   (~1.100-1.200 en el grupo B): 1.000 -> 2.000 con los hijos -> 1.000.
+#   2. reproduccion (X * 1): pasa igual a la generacion siguiente toda
+#      variable que el modelo uso (importancia > 0), sea original o formula.
+#      Lo que fue bueno sigue sin cambiar; lo que el modelo no uso no pasa.
+#      La importancia decide que queda: no hay un corte nuestro. El unico
+#      resguardo es EV_MIN_HIJOS: si las usadas no entran todas dejandole ese
+#      minimo de lugares a los hijos, pasan las de mas importancia
+#   3. cruza: los lugares que quedan hasta EV_TOPE son hijos  padre1 op padre2
+#      (op en + - * /). Los padres se sortean con probabilidad segun el puesto
+#      en la importancia (ranking lineal: el primero es EV_PRESION veces mas
+#      probable que el ultimo; ninguno tiene probabilidad 0). Los padres
+#      pueden ser de cualquier generacion: una nacida en la 1 se cruza con una
+#      de la 5
+#   4. el LightGBM de la generacion siguiente mide a las copias y a los hijos
+#      juntos. La poblacion queda siempre en EV_TOPE: no se buscan
+#      super-variables
+#   El tope por defecto es la cantidad de columnas con la que llega el dataset.
 # GA_MODO=evolutivo   lo de arriba
 # GA_MODO=nada        sin FE evolutivo: el brazo base
-# EV_SELECCION=azar   mismo evolutivo pero padres y sobrevivientes al azar
-#                     (sin importancia): el control para saber si la
-#                     importancia sirve para decidir quien se reproduce
+# EV_SELECCION=azar   mismo evolutivo pero las copias (la misma cantidad) y los
+#                     padres se eligen al azar, sin importancia: el control
+#                     para saber si la importancia sirve para decidir
 # Cada generacion queda en evolutivo_generaciones.txt (tamano de la
-# poblacion, nacidas, muertas, originales vivas, profundidad, ganancia).
+# poblacion, usadas, copias, nacidas, originales vivas, profundidad, ganancia).
 PARAM$GA$modo <- env_o("GA_MODO", "evolutivo")
 if (!(PARAM$GA$modo %in% c("evolutivo", "nada")))
   stop("GA_MODO tiene que ser evolutivo o nada (la genetica de gramEvol, azar y transferencia se sacaron en la v3)")
@@ -169,8 +170,7 @@ PARAM$EV$seleccion    <- env_o("EV_SELECCION", "importancia")
 if (!(PARAM$EV$seleccion %in% c("importancia", "azar"))) stop("EV_SELECCION tiene que ser importancia o azar")
 PARAM$EV$generaciones <- as.integer(env_o("EV_GENERACIONES", "10"))
 PARAM$EV$tope         <- as.integer(env_o("EV_TOPE", "0"))      # 0 = las columnas con las que llega el dataset
-PARAM$EV$hijos        <- as.numeric(env_o("EV_HIJOS", "1"))     # hijos por generacion, en veces el tope
-PARAM$EV$clones       <- as.numeric(env_o("EV_CLONES", "0.1"))  # fraccion de los nacimientos que son clones
+PARAM$EV$min_hijos    <- as.numeric(env_o("EV_MIN_HIJOS", "0.25"))  # lugares minimos para hijos, en fraccion del tope
 PARAM$EV$presion      <- as.numeric(env_o("EV_PRESION", "10"))  # el mejor puesto es X veces mas probable que el peor
 PARAM$EV$semillas_n   <- as.integer(env_o("EV_SEMILLAS_N", "1"))  # LightGBM por generacion (importancia promedio)
 PARAM$EV$borrar_muertas <- env_o("EV_BORRAR_MUERTAS", "1") == "1"   # 1: las originales muertas salen del dataset
@@ -307,10 +307,10 @@ leer_checkpoint <- function(archivo) {
 # ===========================================================================
 # FE EVOLUTIVO (v3, PR 8): una poblacion de variables que evoluciona
 #   evolutivo_generaciones.txt  una fila por generacion: tamano de la
-#                               poblacion, nacidas, muertas, originales vivas,
+#                               poblacion, usadas, copias, nacidas, originales vivas,
 #                               profundidad de las formulas, ganancia
-#   evolutivo_nacimientos.txt   una fila por hijo nacido (formula, padres y su
-#                               generacion): cuantas formulas se generan de verdad
+#   evolutivo_nacimientos.txt   una fila por hijo nacido y por copia X * 1 (formula,
+#                               padres y su generacion): cuantas formulas se generan
 #   evolutivo_poblacion.txt     la poblacion final con su importancia
 #   checkpoints/evolutivo.rds   el estado al final de cada generacion: relanzar
 #                               retoma desde la ultima generacion terminada
@@ -452,28 +452,27 @@ EV <- new.env()   # estado del evolutivo
 
 ev_grabar_estado <- function(g) {
   tmp <- paste0(CK_EV, ".tmp")
-  saveRDS(list(g= g, pob= EV$pob, imp_ori= EV$imp_ori, nacidas_acum= EV$nacidas_acum,
+  saveRDS(list(g= g, pob= EV$pob, nacidas_acum= EV$nacidas_acum,
                rng= get(".Random.seed", envir= globalenv())), tmp)
   file.rename(tmp, CK_EV)
 }
 
 ev_log_generacion <- function(fila) {
   fwrite(fila, ARCH_EV_GEN, sep= "\t", append= file.exists(ARCH_EV_GEN))
-  loguear(sprintf("evolutivo gen %d: poblacion %d (%d originales, %d generadas), nacen %d + %d clones (%d revividas), mueren %d, prof max %d, meseta %s, max %s",
-    fila$generacion, fila$poblacion, fila$originales_vivas, fila$generadas_vivas, fila$nacidas,
-    fila$clones, fila$revividas, fila$muertas, fila$prof_max, miles(fila$ganancia_meseta), miles(fila$ganancia_max)))
+  loguear(sprintf("evolutivo gen %d: poblacion %d (%d originales, %d generadas), %d usadas, %d pasan (X * 1)%s, nacen %d, no pasan %d, prof max %d, meseta %s, max %s",
+    fila$generacion, fila$poblacion, fila$originales_vivas, fila$generadas_vivas, fila$usadas, fila$copias,
+    if (isTRUE(fila$uso_minimo_hijos)) " (minimo de hijos)" else "", fila$nacidas, fila$no_pasan,
+    fila$prof_max, miles(fila$ganancia_meseta), miles(fila$ganancia_max)))
 }
 
 correr_evolutivo <- function() {
   originales <- setdiff(names(dataset)[sapply(dataset, is.numeric)], EV_NO_VARIABLES)
   originales <- originales[!startsWith(originales, "canarito")]
   tope <- if (PARAM$EV$tope > 0) PARAM$EV$tope else length(originales)
-  n_hijos <- round(PARAM$EV$hijos * tope)
-  n_clones <- round(PARAM$EV$clones * n_hijos)
   EV$param <- ev_param()
   semillas <- PARAM$semilla_primigenia + seq_len(PARAM$EV$semillas_n) - 1
-  loguear("evolutivo:", length(originales), "originales, tope", tope, ", por generacion",
-          n_hijos - n_clones, "hijos y", n_clones, "clones, seleccion", PARAM$EV$seleccion,
+  loguear("evolutivo:", length(originales), "originales, tope", tope, ", minimo de hijos",
+          ceiling(PARAM$EV$min_hijos * tope), ", seleccion", PARAM$EV$seleccion,
           ", importancia con el LightGBM de canaritos (", EV$param$num_leaves, "hojas, early stopping",
           EV$param$early_stopping_rounds, ")")
 
@@ -483,7 +482,7 @@ correr_evolutivo <- function() {
 
   if (file.exists(CK_EV)) {
     e <- readRDS(CK_EV)
-    EV$pob <- e$pob; EV$imp_ori <- e$imp_ori; EV$nacidas_acum <- e$nacidas_acum
+    EV$pob <- e$pob; EV$nacidas_acum <- e$nacidas_acum
     g0 <- e$g
     assign(".Random.seed", e$rng, envir= globalenv())
     for (i in which(!EV$pob$original)) assign(EV$pob$nombre[i], ev_evaluar(EV$pob$formula[i], s$datos), envir= V)
@@ -495,11 +494,11 @@ correr_evolutivo <- function() {
     r <- ev_entrenar(originales, V, s, semillas)
     EV$pob <- data.table(nombre= originales, formula= ev_nombre_en_formula(originales),
                          nacio= 0L, prof= 0L, original= TRUE, importancia= unname(r$imp[originales]))
-    EV$imp_ori <- r$imp[originales]
     EV$nacidas_acum <- 0L
     g0 <- 0L
-    ev_log_generacion(data.table(generacion= 0L, poblacion_inicio= length(originales), nacidas= 0L,
-      clones= 0L, revividas= 0L, candidatos= length(originales), muertas= 0L, poblacion= length(originales),
+    ev_log_generacion(data.table(generacion= 0L, poblacion_inicio= length(originales),
+      usadas= sum(r$imp[originales] > 0), copias= 0L, uso_minimo_hijos= FALSE,
+      nacidas= 0L, no_pasan= 0L, poblacion= length(originales),
       originales_vivas= length(originales), generadas_vivas= 0L, prof_max= 0L, prof_media= 0,
       padres_de_generaciones_distintas= NA_real_, nacidas_acumuladas= 0L,
       importancia_generadas= 0, ganancia_meseta= r$meseta, ganancia_max= r$maximo,
@@ -513,16 +512,25 @@ correr_evolutivo <- function() {
     pob_inicio <- nrow(pob)
     peso_padres <- ev_pesos(pob$importancia)
 
-    # --- clones (Highlander): X + cero o X * uno con X original ------------
-    clonadas <- if (n_clones > 0) unique(sample(names(EV$imp_ori), n_clones, replace= TRUE,
-                                               prob= ev_pesos(EV$imp_ori))) else character(0)
-    revividas <- setdiff(clonadas, pob$nombre)
+    # --- reproduccion (X * 1): pasa igual toda variable que el modelo uso
+    # (importancia > 0), original o formula. Si no entran todas dejandole a
+    # los hijos el minimo de EV_MIN_HIJOS, pasan las de mas importancia ------
+    max_copias <- tope - ceiling(PARAM$EV$min_hijos * tope)
+    usadas <- which(pob$importancia > 0)
+    n_copias <- min(length(usadas), max_copias)
+    uso_minimo <- length(usadas) > max_copias
+    copias <- if (PARAM$EV$seleccion == "azar") sample(nrow(pob), n_copias) else
+      usadas[order(-pob$importancia[usadas])][seq_len(n_copias)]
+    pasa <- seq_len(nrow(pob)) %in% copias
+    sigue <- pob[pasa]
+    no_pasa <- pob[!pasa]
 
-    # --- cruzas: padre1 op padre2, padres de cualquier generacion ----------
+    # --- cruza: padre1 op padre2 en los lugares libres, padres de cualquier
+    # generacion (tambien las que no pasan: su informacion sigue en el hijo) -
     hijos <- list()
     vistas <- pob$formula
     intentos <- 0
-    n_cruzas <- n_hijos - n_clones
+    n_cruzas <- tope - n_copias
     while (length(hijos) < n_cruzas && intentos < 5 * n_cruzas) {
       intentos <- intentos + 1
       p <- sample(nrow(pob), 2, prob= peso_padres)
@@ -545,40 +553,21 @@ correr_evolutivo <- function() {
     hijos <- rbindlist(hijos)
     nac <- rbind(
       if (nrow(hijos)) hijos[, .(generacion= g, nombre, formula, padre1, padre2, nacio_padre1, nacio_padre2)],
-      if (length(clonadas)) data.table(generacion= g, nombre= clonadas,
-        formula= paste0(clonadas, ifelse(seq_along(clonadas) %% 2 == 0, " * uno", " + cero")),
-        padre1= clonadas, padre2= ifelse(seq_along(clonadas) %% 2 == 0, "uno", "cero"),
-        nacio_padre1= 0L, nacio_padre2= NA_integer_))
+      if (nrow(sigue)) sigue[, .(generacion= g, nombre, formula= paste0(formula, " * 1"),
+        padre1= nombre, padre2= "uno", nacio_padre1= nacio, nacio_padre2= NA_integer_)])
     if (!is.null(nac) && nrow(nac)) fwrite(nac, ARCH_EV_NAC, sep= "\t", append= file.exists(ARCH_EV_NAC))
     EV$nacidas_acum <- EV$nacidas_acum + nrow(hijos)
 
-    # --- candidatos: la poblacion + las revividas + los hijos ---------------
-    cand <- rbind(pob,
-      if (length(revividas)) data.table(nombre= revividas, formula= ev_nombre_en_formula(revividas),
-        nacio= 0L, prof= 0L, original= TRUE, importancia= NA_real_),
-      if (nrow(hijos)) hijos[, names(pob), with= FALSE])
-    r <- ev_entrenar(cand$nombre, V, s, semillas)
-    cand[, importancia := unname(r$imp[nombre])]
-    EV$imp_ori[cand[original == TRUE, nombre]] <- cand[original == TRUE, importancia]
+    # --- la generacion nueva: copias + hijos, medidas juntas -------------------
+    EV$pob <- rbind(sigue, if (nrow(hijos)) hijos[, names(pob), with= FALSE])
+    r <- ev_entrenar(EV$pob$nombre, V, s, semillas)
+    EV$pob[, importancia := unname(r$imp[nombre])]
+    # las formulas que no pasan no se vuelven a usar (las originales quedan en s$datos)
+    if (nrow(no_pasa[original == FALSE])) rm(list= no_pasa[original == FALSE, nombre], envir= V)
 
-    # --- muerte: sobreviven 'tope', sorteadas por ranking. Las clonadas en
-    # esta generacion no mueren ------------------------------------------------
-    if (nrow(cand) <= tope) {
-      vive <- rep(TRUE, nrow(cand))
-    } else {
-      vive <- cand$nombre %in% clonadas
-      libres <- which(!vive)
-      k <- tope - sum(vive)
-      if (k > 0) vive[libres[sample(length(libres), k, prob= ev_pesos(cand$importancia[libres]))]] <- TRUE
-    }
-    muertas <- cand[!vive]
-    EV$pob <- cand[vive]
-    # las generadas muertas no se vuelven a usar (las originales quedan en s$datos)
-    if (nrow(muertas[original == FALSE])) rm(list= muertas[original == FALSE, nombre], envir= V)
-
-    ev_log_generacion(data.table(generacion= g, poblacion_inicio= pob_inicio, nacidas= nrow(hijos),
-      clones= length(clonadas), revividas= length(revividas), candidatos= nrow(cand),
-      muertas= nrow(muertas), poblacion= nrow(EV$pob),
+    ev_log_generacion(data.table(generacion= g, poblacion_inicio= pob_inicio,
+      usadas= sum(EV$pob$importancia > 0), copias= nrow(sigue), uso_minimo_hijos= uso_minimo,
+      nacidas= nrow(hijos), no_pasan= nrow(no_pasa), poblacion= nrow(EV$pob),
       originales_vivas= sum(EV$pob$original), generadas_vivas= sum(!EV$pob$original),
       prof_max= max(EV$pob$prof), prof_media= round(mean(EV$pob$prof), 2),
       padres_de_generaciones_distintas= if (nrow(hijos)) round(mean(hijos$nacio_padre1 != hijos$nacio_padre2), 3) else NA_real_,
@@ -619,11 +608,12 @@ texto_evolutivo <- function() {
   if (!file.exists(ARCH_EV_GEN)) return("El evolutivo no termino ninguna generacion.")
   gen <- fread(ARCH_EV_GEN, sep= "\t")
   paste0("FE evolutivo (seleccion ", PARAM$EV$seleccion, ", tope ", max(gen$poblacion), "):\n",
-    paste(sprintf("  gen %2d: poblacion %5d -> %5d candidatos -> %5d | nacen %4d + %3d clones (%3d revividas) | originales vivas %5d | generadas %5d | prof max %2d | imp generadas %5.1f%% | meseta %s | max %s",
-      gen$generacion, gen$poblacion_inicio, gen$candidatos, gen$poblacion, gen$nacidas, gen$clones,
-      gen$revividas, gen$originales_vivas, gen$generadas_vivas, gen$prof_max,
+    paste(sprintf("  gen %2d: poblacion %5d | usadas %5d | pasan (X * 1) %5d%s | nacen %4d | originales vivas %5d | generadas %5d | prof max %2d | imp generadas %5.1f%% | meseta %s | max %s",
+      gen$generacion, gen$poblacion, gen$usadas, gen$copias, ifelse(gen$uso_minimo_hijos, "*", " "),
+      gen$nacidas, gen$originales_vivas, gen$generadas_vivas, gen$prof_max,
       100 * gen$importancia_generadas, miles(gen$ganancia_meseta), miles(gen$ganancia_max)), collapse= "\n"),
-    "\nFormulas nacidas en total: ", miles(max(gen$nacidas_acumuladas)))
+    "\nFormulas nacidas en total: ", miles(max(gen$nacidas_acumuladas)),
+    if (any(gen$uso_minimo_hijos)) "\n* = las usadas no entraban todas: se uso el minimo de lugares para hijos (EV_MIN_HIJOS)" else "")
 }
 
 
@@ -669,11 +659,10 @@ mandar_mail("arranco",
          if (PARAM$GA$modo == "evolutivo") paste0(", seleccion ", PARAM$EV$seleccion,
            ", ", PARAM$EV$generaciones, " generaciones, tope ",
            if (PARAM$EV$tope > 0) PARAM$EV$tope else "columnas iniciales",
-           ", clones ", PARAM$EV$clones, ", presion ", PARAM$EV$presion,
+           ", minimo de hijos ", PARAM$EV$min_hijos, ", presion ", PARAM$EV$presion,
            ", importancia con el LightGBM de canaritos (entrena ",
            paste(range(PARAM$CN$train$training), collapse= "-"), ", valida ",
-           paste(PARAM$CN$train$validation, collapse= ","), ")"), "
-",
+           paste(PARAM$CN$train$validation, collapse= ","), ")"), "\n",
          "Canaritos: ", if (PARAM$CN$run) "si" else "no", ", FT_ALFA ", PARAM$FT$alfa, "\n",
          if (nzchar(PARAM$BO$ht_fijo)) paste0("HT fijo: ", PARAM$BO$ht_fijo, "\n"),
          "Final train: undersampling ", PARAM$FT$undersampling, " de los CONTINUA\n",

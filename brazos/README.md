@@ -8,9 +8,9 @@ pipeline y, en cada semilla, todos los brazos con todo lo demás igual.
 |---|---|---|---|
 | E0 | WF9920 | `GA_MODO=nada` | la base de la cátedra, con canaritos |
 | E5 | WF9925 | `GA_MODO=nada`, `CN_RUN=0` | la base sin canaritos (el evolutivo los apaga) |
-| E6 | WF9926 | `GA_MODO=evolutivo`, selección por importancia, 10% clones | el evolutivo |
-| E7 | WF9927 | E6 con `EV_SELECCION=azar` | ¿sirve la importancia para elegir quién se reproduce y quién muere? |
-| E8 | WF9928 | E6 con `EV_CLONES=0` | ¿sirve el operador clon (Highlander)? |
+| E6 | WF9926 | `GA_MODO=evolutivo`, pasa (`X * 1`) lo que tiene importancia, hijos en el resto | el evolutivo |
+| E7 | WF9927 | E6 con `EV_SELECCION=azar` | ¿sirve la importancia para elegir qué pasa y quién se reproduce? |
+| E8 | WF9928 | E6 con `EV_MIN_HIJOS=1` (sin copias) | ¿sirve que lo bueno pase igual (`X * 1`)? |
 | E9 | WF9929 | E0 con `FT_ALFA=0.95` | pesos temporales 0,95^k en el final train |
 
 Comparaciones fijadas antes de correr (`analizar_brazos.R`):

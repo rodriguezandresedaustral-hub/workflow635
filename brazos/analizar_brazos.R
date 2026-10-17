@@ -2,7 +2,7 @@
 # Compara los brazos del workflow635 v3 (grupo B: ganancia real en 202107)
 #   E0 (WF9920) base con canaritos      E5 (WF9925) base sin canaritos
 #   E6 (WF9926) FE evolutivo            E7 (WF9927) evolutivo, seleccion al azar
-#   E8 (WF9928) evolutivo sin clones    E9 (WF9929) base con FT_ALFA=0.95
+#   E8 (WF9928) evolutivo sin copias    E9 (WF9929) base con FT_ALFA=0.95
 # Metrica principal: la MESETA (promedio de los cortes fijos de 8.000 a 12.000
 # de ganancia_202107.txt), pareada por semilla del pipeline, con Wilcoxon de
 # rangos con signo. El PR 9 (validacion/) mostro que el maximo es optimista en

@@ -62,21 +62,23 @@ Cada generación (`GA_MODO=evolutivo`):
    stopping sobre la ganancia meseta) entrena con **todas** las columnas
    vivas y da la importancia (gain) de cada una. El evolutivo no tiene un
    LightGBM propio. La ganancia en 202105 queda en el registro.
-2. **Reproducción:** nacen `EV_HIJOS × tope` hijos `padre1 op padre2`
-   (`op` en `+ − × /`, con NaN → 0 e Inf → NA en cada operación). Los padres
-   se sortean con probabilidad según su puesto en la importancia (ranking
-   lineal: el primero es `EV_PRESION` veces más probable que el último y
-   nadie tiene probabilidad 0). Los padres pueden ser de **cualquier
-   generación**: una nacida en la 1 se cruza con una de la 5.
-3. **Clon (Highlander):** `EV_CLONES` de los nacimientos son `X + cero` o
-   `X * uno` con `X` una variable original. Las constantes nunca tienen
-   importancia, así que entran por esta regla forzada y no por el sorteo. El
-   clon de una original viva la salva de morir en esa generación; el de una
-   muerta la revive.
-4. **Muerte:** de población + hijos sobreviven `tope` columnas, sorteadas sin
-   reposición con la misma probabilidad por ranking. Por defecto el tope es la
-   cantidad de columnas con la que llega el dataset (~1.100–1.200 en el grupo
-   B): 1.150 → 2.300 con los hijos → 1.150. **La población nunca baja.**
+2. **Reproducción (`X * 1`):** pasa igual a la generación siguiente **toda
+   variable que el modelo usó** (importancia > 0), sea original o fórmula. Lo
+   que fue bueno sigue sin cambiar y lo que el modelo no usó no pasa: la
+   importancia decide qué queda, sin un corte nuestro. El único resguardo es
+   `EV_MIN_HIJOS` (25 % del tope): si las usadas no entran todas dejándole
+   ese mínimo de lugares a los hijos, pasan las de más importancia. El
+   registro marca las generaciones en que actuó.
+3. **Cruza:** los lugares que quedan hasta el tope son hijos `padre1 op
+   padre2` (`op` en `+ − × /`, con NaN → 0 e Inf → NA en cada operación). Los
+   padres se sortean con probabilidad según su puesto en la importancia
+   (ranking lineal: el primero es `EV_PRESION` veces más probable que el
+   último y nadie tiene probabilidad 0). Los padres pueden ser de **cualquier
+   generación**, y también una variable que no pasa puede ser padre: su
+   información sigue en el hijo.
+4. **Medición:** el LightGBM de la generación siguiente mide a las copias y a
+   los hijos juntos. Por defecto el tope es la cantidad de columnas con la que
+   llega el dataset. **La población nunca baja.**
 
 Al final la población entra al dataset entero (las fórmulas se escriben con
 los nombres de las columnas originales y se recalculan) y las originales
@@ -88,7 +90,7 @@ prende igual).
 
 | Archivo | Qué |
 |---|---|
-| `evolutivo_generaciones.txt` | una fila por generación: población al inicio, candidatos, población al final, nacidas, clones, revividas, muertas, **originales vivas**, generadas vivas, profundidad máxima y media, fracción de hijos con padres de generaciones distintas, **fórmulas nacidas acumuladas**, % de la importancia que tienen las generadas, ganancia en la validation de canaritos (meseta y máximo) y segundos |
+| `evolutivo_generaciones.txt` | una fila por generación: población, **usadas** (importancia > 0), copias `X * 1`, si actuó el mínimo de hijos, nacidas, las que no pasan, **originales vivas**, generadas vivas, profundidad máxima y media, fracción de hijos con padres de generaciones distintas, **fórmulas nacidas acumuladas**, % de la importancia que tienen las generadas, ganancia en la validation de canaritos (meseta y máximo) y segundos |
 | `evolutivo_nacimientos.txt` | cada hijo y cada clon: fórmula, padres y generación de cada padre |
 | `evolutivo_poblacion.txt` | la población final con su importancia |
 | `checkpoints/evolutivo.rds` | el estado al final de cada generación: si la VM se corta, retoma desde ahí |
@@ -101,11 +103,10 @@ cuántas generadas usa el modelo final y en qué puestos.
 | Variable | Default | Qué hace |
 |---|---|---|
 | `GA_MODO` | `evolutivo` | `evolutivo` o `nada` (sin FE evolutivo, la base) |
-| `EV_SELECCION` | `importancia` | `azar`: padres y sobrevivientes al azar (el control de si la importancia sirve) |
+| `EV_SELECCION` | `importancia` | `azar`: las copias (la misma cantidad) y los padres al azar (el control de si la importancia sirve) |
 | `EV_GENERACIONES` | 10 | |
 | `EV_TOPE` | 0 | tamaño de la población; 0 = las columnas con las que llega el dataset |
-| `EV_HIJOS` | 1 | nacimientos por generación, en veces el tope |
-| `EV_CLONES` | 0.1 | fracción de los nacimientos que son clones |
+| `EV_MIN_HIJOS` | 0.25 | lugares mínimos para hijos, en fracción del tope (1 = sin copias `X * 1`) |
 | `EV_PRESION` | 10 | cuántas veces más probable es el primero de la importancia que el último |
 | `EV_SEMILLAS_N` | 1 | LightGBM por generación (importancia promediada) |
 | `EV_BORRAR_MUERTAS` | 1 | 0: las originales muertas quedan en el dataset |
@@ -127,7 +128,8 @@ secundaria, porque el máximo es optimista y más ruidoso (ver PR 9).
 
 **Prueba:** `tests/test_evolutivo.R` corre el evolutivo sobre un dataset
 sintético de 20 variables (segundos) y verifica que la población quede en el
-tope, que haya clones, recombinación entre generaciones, el conteo de
+tope, que pasen todas las usadas de la generación anterior (originales y
+fórmulas), que siempre haya lugar para hijos, recombinación entre generaciones, el conteo de
 fórmulas, que se retome desde el checkpoint y que las fórmulas se recalculen
 igual en el dataset entero:
 
@@ -137,7 +139,7 @@ Rscript tests/test_evolutivo.R 635_workflow_senior.R
 
 **¿El evolutivo mejora el modelo final?** Para eso está el
 [experimento de brazos](brazos/README.md): grupo B, 10 semillas pareadas,
-base vs. evolutivo vs. evolutivo con selección al azar vs. sin clones.
+base vs. evolutivo vs. evolutivo con selección al azar vs. sin copias `X * 1`.
 
 ## Puesta en marcha
 

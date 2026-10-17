@@ -26,7 +26,7 @@ MAILS <- 0; mandar_mail <- function(...) MAILS <<- MAILS + 1
 GRUPO <- "B"
 PARAM <- list(semilla_primigenia= 100213, ganancia= list(acierto= 975000, error= -25000),
   BO= list(ht_fijo= ""), GA= list(modo= "evolutivo"),
-  EV= list(seleccion= "importancia", generaciones= 4L, tope= 0L, hijos= 1, clones= 0.1, presion= 10,
+  EV= list(seleccion= "importancia", generaciones= 4L, tope= 0L, min_hijos= 0.25, presion= 10,
            semillas_n= 1L, borrar_muertas= TRUE, mail_cada_gen= 1),
   CN= list(train= list(clase01_valor1= c("BAJA+2", "BAJA+1"), positivos= c("BAJA+2"),
     training= c(202101, 202102, 202103), validation= c(202105), undersampling= 0.1,
@@ -60,10 +60,16 @@ pob <- fread(ARCH_EV_POB)
 ok <- function(cond, msg) { cat(if (isTRUE(cond)) "OK   " else "FALLA", msg, "\n"); if (!isTRUE(cond)) quit(status= 1) }
 ok(nrow(gen) == 5, "una fila por generacion (0..4)")
 ok(all(gen$poblacion[-1] == 20), "la poblacion queda en el tope (20) todas las generaciones")
-ok(all(gen$candidatos[-1] > 20), "nacen hijos y la poblacion crece antes de la muerte")
+ok(all(gen$copias[-1] + gen$nacidas[-1] == gen$poblacion[-1]), "la generacion es copias X * 1 + hijos")
+ok(all(gen$nacidas[-1] >= 5), "siempre hay lugar para hijos (EV_MIN_HIJOS = 0,25 del tope de 20)")
 ok(sum(gen$nacidas) == max(gen$nacidas_acumuladas), "conteo de formulas nacidas")
-ok(any(gen$clones > 0), "hay clones")
-ok(all(grepl("\\+ cero$|\\* uno$", nac[padre2 %in% c("cero", "uno"), formula])), "clones X+cero / X*uno")
+# la regla: pasa igual toda variable que el modelo uso en la generacion anterior
+# (importancia > 0), salvo que no entren todas y actue el minimo de hijos
+ok(all(gen$copias[-1] == pmin(gen$usadas[-nrow(gen)], 15)), "pasan todas las usadas de la generacion anterior (hasta 15)")
+ok(all(gen$uso_minimo_hijos[-1] == (gen$usadas[-nrow(gen)] > 15)), "el minimo de hijos actua solo cuando las usadas no entran")
+copias <- nac[padre2 == "uno"]
+ok(nrow(copias) == sum(gen$copias) && all(endsWith(copias$formula, " * 1")), "las copias quedan como X * 1 en nacimientos")
+ok(any(copias$nacio_padre1 > 0), "tambien pasan formulas, no solo originales")
 ok(max(gen$prof_max) >= 2, "hay recombinacion entre generaciones (profundidad >= 2)")
 ok(nrow(pob) == 20, "evolutivo_poblacion.txt con 20 filas")
 gen_vivas <- pob[original == FALSE, nombre]
