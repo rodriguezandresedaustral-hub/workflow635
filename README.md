@@ -125,9 +125,9 @@ y los modos `genetica`, `azar` y `transferencia` de la v2 ya no existen.
 
 En grupo B la corrida graba `ganancia_202107.txt` (los 9 cortes y, en la
 última fila, el máximo de la curva), `ganancia_maximo.txt` y
-`ganancia_meseta.txt`. La comparación entre brazos usa el **máximo** por
-semilla con Wilcoxon apareado (lo que pidió la clase) y la meseta como
-secundaria.
+`ganancia_meseta.txt`. La comparación entre brazos usa la **meseta** por
+semilla con Wilcoxon apareado y el máximo (lo que pidió la clase) como
+secundaria, porque el máximo es optimista y más ruidoso (ver PR 9).
 
 **Prueba:** `tests/test_evolutivo.R` corre el evolutivo sobre un dataset
 sintético de 20 variables (segundos) y verifica que la población quede en el

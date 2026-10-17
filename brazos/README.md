@@ -22,11 +22,12 @@ Comparaciones fijadas antes de correr (`analizar_brazos.R`):
 - **E5 − E0**: lo que cambia por no correr canaritos (para leer E6 − E0).
 - **E9 − E0**: los pesos alfa, solos.
 
-**Métrica (la de la clase):** el **máximo** de la curva de ganancia de cada
-corrida (última fila de `ganancia_202107.txt`, también en
-`ganancia_maximo.txt`), pareado por semilla, con **Wilcoxon de rangos con
-signo** y Holm sobre las 6 comparaciones. La meseta (promedio de los 9 cortes
-de 8.000 a 12.000) sale como secundaria. Con n semillas el p más chico
+**Métrica:** la **meseta** de cada corrida (promedio de los 9 cortes de 8.000
+a 12.000 de `ganancia_202107.txt`, también en `ganancia_meseta.txt`),
+pareada por semilla, con **Wilcoxon de rangos con signo** y Holm sobre las 6
+comparaciones. El máximo de la curva (la métrica de la clase, última fila,
+en `ganancia_maximo.txt`) sale como secundaria: el PR 9 (`validacion/`)
+mostró que es optimista en 10–12 M y tiene unas 4 veces peor señal/ruido. Con n semillas el p más chico
 posible es 2/2^n: hacen falta al menos 6 (0,031); con 10, 0,002. Las 10 por
 defecto: 100213, 271211, 100313, 353161, 100613, 487757, 100913, 641371,
 101113 y 823541. Más semillas: `SEMILLAS="..."`.
@@ -76,7 +77,7 @@ llevó a la v3. Los resultados quedan en `exp/brazos_v2/analisis.txt`.
   cada semilla seguidos (si se corta a mitad, lo terminado ya está pareado),
   saltea lo que tiene `TERMINADO` y relanza lo que falló, que retoma desde
   sus checkpoints (el evolutivo, desde la última generación terminada).
-- `analizar_brazos.R`: Wilcoxon apareado sobre el máximo y la meseta, el
+- `analizar_brazos.R`: Wilcoxon apareado sobre la meseta (principal) y el máximo, el
   evolutivo generación por generación (población, originales vivas,
   generadas, profundidad, % de importancia de las generadas, fórmulas
   nacidas) y cuántas generadas usa el modelo final.

@@ -3,10 +3,11 @@
 #   E0 (WF9920) base con canaritos      E5 (WF9925) base sin canaritos
 #   E6 (WF9926) FE evolutivo            E7 (WF9927) evolutivo, seleccion al azar
 #   E8 (WF9928) evolutivo sin clones    E9 (WF9929) base con FT_ALFA=0.95
-# Metrica principal (la de la clase): el MAXIMO de la curva de ganancia de
-# cada corrida (ultima fila de ganancia_202107.txt), pareado por semilla del
-# pipeline, con Wilcoxon de rangos con signo. La meseta (promedio de los cortes
-# fijos de 8.000 a 12.000) va como secundaria.
+# Metrica principal: la MESETA (promedio de los cortes fijos de 8.000 a 12.000
+# de ganancia_202107.txt), pareada por semilla del pipeline, con Wilcoxon de
+# rangos con signo. El PR 9 (validacion/) mostro que el maximo es optimista en
+# 10-12 M y tiene ~4 veces peor senal/ruido, asi que el MAXIMO de la curva (la
+# metrica de la clase, ultima fila) va como secundaria.
 #
 # uso (en la VM, como ds):  Rscript brazos/analizar_brazos.R [carpeta exp]
 # graba brazos_v3/brazos.csv y brazos_v3/evolutivo.csv; el resto va a la salida
@@ -59,10 +60,10 @@ fwrite(runs, file.path(SALIDA, "brazos.csv"))
 cat("Corridas terminadas por brazo:", paste(names(table(runs$brazo)), table(runs$brazo), sep= "=", collapse= "  "), "\n\n")
 
 tabla <- function(metrica) dcast(runs, semilla ~ brazo, value.var= metrica)
-for (m in c("maximo", "meseta")) {
+for (m in c("meseta", "maximo")) {
   a <- tabla(m)
-  cat(if (m == "maximo") "MAXIMO de la curva por semilla (millones, metrica principal):\n"
-      else "Meseta por semilla (millones, secundaria):\n")
+  cat(if (m == "meseta") "MESETA por semilla (millones, metrica principal):\n"
+      else "Maximo de la curva por semilla (millones, secundaria):\n")
   print(a[, c(list(semilla= semilla), lapply(.SD, millones)), .SDcols= setdiff(names(a), "semilla")], row.names= FALSE)
   cat("Promedio por brazo:", paste(runs[, .(v= millones(mean(get(m)))), by= brazo][order(brazo), paste0(brazo, " ", v)], collapse= "   "), "\n\n")
 }
@@ -81,12 +82,12 @@ comparar <- function(a, b, ancho) {
   data.table(comparacion= paste(a, "-", b), n= n, media= mean(x), mediana= median(x),
              gana= sum(x > 0), p_wilcoxon= p)
 }
-for (m in c("maximo", "meseta")) {
+for (m in c("meseta", "maximo")) {
   ancho <- tabla(m)
   tb <- rbindlist(lapply(COMPARACIONES, function(k) cbind(comparar(k[1], k[2], ancho), pregunta= k[3])), fill= TRUE)
   if ("p_wilcoxon" %in% names(tb)) tb[!is.na(p_wilcoxon), p_holm := p.adjust(p_wilcoxon, method= "holm")]
   cat(sprintf("Wilcoxon apareado sobre %s (millones; Holm sobre las comparaciones con pares):\n",
-              if (m == "maximo") "el MAXIMO" else "la meseta"))
+              if (m == "meseta") "la MESETA (principal)" else "el maximo (secundaria)"))
   for (i in seq_len(nrow(tb))) with(tb[i], {
     if (n < 2) cat(sprintf("  %-8s n=%d, faltan pares  (%s)\n", comparacion, n, pregunta))
     else cat(sprintf("  %-8s n=%2d  media %7s  mediana %7s  gana %2d de %2d  p %s  Holm %s%s  (%s)\n",
