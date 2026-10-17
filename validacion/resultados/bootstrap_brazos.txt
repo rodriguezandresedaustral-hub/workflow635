@@ -1,0 +1,16 @@
+WF9901 - WF9900 (10 semillas): diferencia de meseta observada 1.72 M
+   ruido de semillas solo (error estandar t): 0.96 M -> IC95 [-0.15; 3.60]
+   ruido del mes solo (bootstrap clientes): sd 1.78 M -> IC95 [-1.83; 5.43], P(dif>0) 0.84
+   semillas + mes: sd 2.36 M -> IC95 [-2.58; 6.42], P(dif>0) 0.74
+WF9902 - WF9900 (20 semillas): diferencia de meseta observada 2.85 M
+   ruido de semillas solo (error estandar t): 0.96 M -> IC95 [0.97; 4.73]
+   ruido del mes solo (bootstrap clientes): sd 1.39 M -> IC95 [-0.16; 5.40], P(dif>0) 0.97
+   semillas + mes: sd 1.97 M -> IC95 [-1.31; 6.57], P(dif>0) 0.92
+WF9903 - WF9900 (10 semillas): diferencia de meseta observada 0.14 M
+   ruido de semillas solo (error estandar t): 1.58 M -> IC95 [-2.94; 3.23]
+   ruido del mes solo (bootstrap clientes): sd 1.73 M -> IC95 [-3.28; 3.69], P(dif>0) 0.54
+   semillas + mes: sd 2.63 M -> IC95 [-4.96; 5.19], P(dif>0) 0.52
+WF9904 - WF9900 (10 semillas): diferencia de meseta observada 3.12 M
+   ruido de semillas solo (error estandar t): 1.08 M -> IC95 [1.01; 5.23]
+   ruido del mes solo (bootstrap clientes): sd 1.93 M -> IC95 [-0.55; 6.87], P(dif>0) 0.94
+   semillas + mes: sd 2.50 M -> IC95 [-2.04; 7.73], P(dif>0) 0.89
