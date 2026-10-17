@@ -170,12 +170,18 @@ fórmulas de dos campos, y 2,7 × 10¹⁰ de tres.
    bins (más uno para NA, como LightGBM) y se mide cuánto baja el Brier de
    predecir con la tasa de su bin. Los bins se estiman en una mitad de las
    filas y se miden en la otra, así que un corte de ruido empeora. A eso se le
-   resta lo mismo para el mejor de sus dos campos solo: queda lo que agrega la
-   combinación. Puntaje: media entre meses menos un error estándar. Unos 4 ms
-   por fórmula en un núcleo; en paralelo con `mclapply`. El log dice los ms
-   medidos y el tiempo estimado antes de arrancar.
-2. **Lista corta.** De las 500 mejores, las `PF_LISTA` (50) con correlación
-   menor a 0,9 con las ya elegidas. Queda en `prefiltro_<mes>.txt`.
+   resta lo que ya logra un árbol con los dos campos sin la fórmula: lo mejor
+   entre cada campo solo (31 bins) y los dos cortados juntos, uno fino (31) y
+   el otro grueso (6), en las dos direcciones. Queda lo que la fórmula agrega
+   sobre cortar `a` y `b` por separado, como una frontera diagonal. Puntaje:
+   media entre meses menos un error estándar. Mide la fórmula sola, sin sus
+   lags; el LightGBM del paso 3 la mide con sus cuatro derivadas. En
+   paralelo con `mclapply`; el log dice los ms medidos y el tiempo estimado
+   antes de arrancar (WF9550: 3.504.650 fórmulas en 15 min).
+2. **Lista corta.** De las 500 mejores, las `PF_LISTA` (50) que no repiten a
+   una ya elegida: correlación menor a 0,9 en los bins y en lo que predicen
+   (`a + b` y `a - b` arman la misma partición en otro orden). Queda en
+   `prefiltro_<mes>.txt`.
 3. **LightGBM.** Las de la lista se miden con el fitness de siempre en el mes
    de búsqueda, una vez por cada semilla de `semillas_ruido` (3), contra la
    base de esa semilla, y la mejora es el promedio. Queda en
