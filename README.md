@@ -16,33 +16,9 @@ cátedra, para los dos grupos del experimento colaborativo.
 Las funciones y celdas de la cátedra están copiadas **sin cambios** en
 `635_workflow_senior.R`; cada bloque dice de qué celda viene. Lo agregado:
 
-- **FE genético** (la consigna del FE intra-mes), después del FE intra-mes
-  manual y antes del histórico:
-  - `gramEvol` evoluciona fórmulas `v1 op v2` o `(v1 op v2) op v3` sobre los
-    campos del mes, con `+ − × /`.
-  - **Fitness:** cuánta ganancia agrega la fórmula a un LightGBM fijo, medida
-    en un **mes de búsqueda** que ni la BO ni el testing usan (A: 202103,
-    B: 202101), entrenando con todos los meses desde 201901 hasta 1 de gap
-    (o solo los `GA_VENTANA` anteriores) y el 20% de los CONTINUA. Ver [La genética v2](#la-genética-v2).
-  - Por ronda, la mejor fórmula pasa por un **control** en otro mes que la
-    búsqueda no vio (A: 202105, B: 202103): se mide junto a 19 fórmulas al
-    azar de la misma gramática y **queda solo si sale primera y mejora**
-    (si no aporta nada, eso pasa con probabilidad 1/20). El umbral de 2
-    desvíos del ruido entre semillas se sigue calculando, pero solo queda en
-    el registro. Cada ganadora entra como `gen_01`, `gen_02`... y después
-    recibe lags, deltas y tendencia como cualquier campo.
-  - Cada fórmula evaluada queda en `genetica_log.txt` (si la VM se corta,
-    retoma sin volver a entrenar lo medido), cada ronda en
-    `genetica_rondas.txt` y el control de cada ronda en
-    `genetica_control.txt`.
-  - Mail en cada generación con las 10 mejores fórmulas, los segundos por
-    fórmula y las horas usadas, y al terminar cada ronda.
-  - **Tope de horas opcional** (`PARAM$GA$horas_max`, apagado por defecto):
-    con un número, al llegar cierra la ronda con la mejor fórmula medida y
-    sigue sola con el resto del workflow. El mail final dice, por variable ganadora, la fórmula, la mejora,
-    si sobrevivió a canaritos y su puesto en la importancia del modelo final.
-  - Los parámetros (`PARAM$GA$...`: rondas, población, generaciones, meses,
-    LightGBM del fitness) están al principio del script.
+- **FE evolutivo** (v3, PR 8), después del FE histórico y del de random
+  forest. Reemplaza a la genética de `gramEvol` de la v1/v2. Ver
+  [El FE evolutivo](#el-fe-evolutivo-v3).
 - **Configuración en `.env`**: grupo, rutas, mail, Kaggle. Si falta una
   variable, corta al arrancar con su nombre.
 - **Semillas fijas**: primigenia 100213, semillerio de 9:
@@ -70,84 +46,102 @@ Las funciones y celdas de la cátedra están copiadas **sin cambios** en
   El z635 solo grababa la BO cada 600 s y nunca durante el diseño inicial (20
   entrenamientos): si se cortaba ahí, se perdía todo.
 
-## La genética v2
+## El FE evolutivo (v3)
 
-La primera versión de la genética tenía dos problemas de diseño que la
-hacían aceptar ruido:
+Lo que salió de la clase y del experimento de brazos v2 (la genética de
+`gramEvol` no le ganó a sortear fórmulas: ver [brazos](brazos/README.md)):
+no buscar **una** super-variable por ronda, sino hacer evolucionar **toda la
+población de columnas** con un tamaño fijo, y que la importancia decida
+quién se reproduce y quién muere.
 
-1. **Elegía con el mismo mes que valida la BO.** El fitness medía en 202107
-   (A) o 202105 (B), que es el `validate` de la BO. Las `gen_*` se eligen por
-   ser buenas en ese mes y después la BO evalúa en ese mismo mes: la ganancia
-   de validación sale inflada a favor de ellas.
-2. **El umbral de 2 desvíos compara cosas distintas.** Compara el *máximo* de
-   cientos de fórmulas contra el ruido entre semillas de *una* sola (y con 3
-   semillas, un desvío muy impreciso). El máximo de muchas fórmulas inútiles
-   supera 2 desvíos casi seguro (winner's curse).
+Cada generación (`GA_MODO=evolutivo`):
 
-La v2 mide en otros meses y decide con un control contra el azar:
+1. **Fitness representativo:** un LightGBM con los hiperparámetros de la
+   mejor fila de la BO de `HT_FIJO` (los mismos que el modelo final; sin
+   `HT_FIJO`, uno chico) entrena con **todas** las columnas vivas y da la
+   importancia (gain) de cada una y la ganancia en el mes de validación del
+   fitness (A: 202103, B: 202101; nunca el de la BO ni el testing).
+2. **Reproducción:** nacen `EV_HIJOS × tope` hijos `padre1 op padre2`
+   (`op` en `+ − × /`, con NaN → 0 e Inf → NA en cada operación). Los padres
+   se sortean con probabilidad según su puesto en la importancia (ranking
+   lineal: el primero es `EV_PRESION` veces más probable que el último y
+   nadie tiene probabilidad 0). Los padres pueden ser de **cualquier
+   generación**: una nacida en la 1 se cruza con una de la 5.
+3. **Clon (Highlander):** `EV_CLONES` de los nacimientos son `X + cero` o
+   `X * uno` con `X` una variable original. Las constantes nunca tienen
+   importancia, así que entran por esta regla forzada y no por el sorteo. El
+   clon de una original viva la salva de morir en esa generación; el de una
+   muerta la revive.
+4. **Muerte:** de población + hijos sobreviven `tope` columnas, sorteadas sin
+   reposición con la misma probabilidad por ranking. Por defecto el tope es la
+   cantidad de columnas con la que llega el dataset (~1.100–1.200 en el grupo
+   B): 1.150 → 2.300 con los hijos → 1.150. **La población nunca baja.**
 
-| Grupo | Búsqueda (gramEvol) | Control | Nunca |
-|---|---|---|---|
-| A | 202103 | 202105 | 202107, 202109 |
-| B | 202101 | 202103 | 202105, 202107 |
+Al final la población entra al dataset entero (las fórmulas se escriben con
+los nombres de las columnas originales y se recalculan) y las originales
+muertas se borran. Canaritos no corre por defecto con el evolutivo: achica el
+dataset a ~450 columnas, justo lo contrario de lo que se busca (`CN_RUN=1` lo
+prende igual).
 
-El script corta con error si se le pide medir en un mes prohibido.
+**Lo que queda registrado:**
 
-**Prueba con datos sintéticos** (una variable con señal plantada, `v1 / v2`,
-y el resto ruido puro; control de 5 fórmulas al azar para que fuera rápido).
-Las ganadoras de la búsqueda, ronda por ronda:
-
-| Fórmula | Mejora en la búsqueda | Umbral 2 desvíos | Regla v1 | Mejora en el control | Puesto | Regla v2 |
-|---|---|---|---|---|---|---|
-| ronda 1: `(v3 * v6) + v3` (ruido) | 3.000.700 | 2.457.304 | queda | −796.300 | 2 de 6 | descartada |
-| ronda 2: `(v6 * v3) - v3` (ruido) | 3.048.150 | 2.457.304 | queda | −1.160.550 | 3 de 6 | descartada |
-
-Las dos fórmulas de ruido superan el umbral porque cada una es la mejor de
-cientos; en un mes que no vieron, pierden. Puesta a mano en el control,
-`v1 / v2` (la señal) sale primera con +628.800. El costo del control es que
-el ruido también puede salir primero: con 5 fórmulas al azar, 1 de cada 6
-veces; con las 19 de la configuración real, 1 de cada 20.
-
-**Variables nuevas del `.env`** (todas opcionales; sin ellas corre como antes,
-salvo los meses y la regla de la genética):
-
-| Variable | Qué hace |
+| Archivo | Qué |
 |---|---|
-| `GA_MODO` | `genetica` (default), `azar` (una fórmula sorteada por ronda, sin búsqueda), `nada` (sin FE genético) o `transferencia` (ver abajo) |
-| `GA_FORZAR=1` | las ganadoras entran aunque no pasen el control (el veredicto queda registrado igual) |
-| `GA_VALIDA_BUSQUEDA`, `GA_VALIDA_CONTROL` | meses de la genética (defaults en la tabla de arriba) |
-| `GA_BUSQUEDA_EN_BO=1` | deja que la búsqueda mida en el mes de validación de la BO (202107 en el A, 202105 en el B); el control sigue sin poder. Lo usa el brazo E4 |
-| `GA_VENTANA` | meses de entrenamiento del fitness antes de cada mes, con 1 de gap (vacío o 0: todos desde 201901, como la v1; 6 es ~4 veces más rápido) |
-| `GA_N_CONTROL` | fórmulas al azar del control (19) |
-| `GA_UNDERSAMPLING` | fracción de CONTINUA en el fitness (0.2) |
-| `GA_RONDAS` | rondas de la genética (3) |
-| `HT_FIJO` | ruta a un `BO_log.txt` de otra corrida: se usa su mejor fila y no se corre la BO |
-| `FT_SEMILLAS_N` | cuántas semillas del semillerio final usar (default: las 9) |
-| `FT_UNDERSAMPLING` | fracción de CONTINUA en el final train (default 1 = todos) |
-| `KAGGLE_SUBIR=0` | grupo A sin subir a Kaggle (los CSV quedan igual) |
-| `TRF_BUSQUEDAS`, `TRF_MEDIR`, `TRF_TOP` | solo con `GA_MODO=transferencia`: meses de búsqueda, meses donde se vuelve a medir y cuántas fórmulas (20) |
+| `evolutivo_generaciones.txt` | una fila por generación: población al inicio, candidatos, población al final, nacidas, clones, revividas, muertas, **originales vivas**, generadas vivas, profundidad máxima y media, fracción de hijos con padres de generaciones distintas, **fórmulas nacidas acumuladas**, % de la importancia que tienen las generadas, ganancia del fitness (meseta y máximo) y segundos |
+| `evolutivo_nacimientos.txt` | cada hijo y cada clon: fórmula, padres y generación de cada padre |
+| `evolutivo_poblacion.txt` | la población final con su importancia |
+| `checkpoints/evolutivo.rds` | el estado al final de cada generación: si la VM se corta, retoma desde ahí |
 
-**`GA_MODO=transferencia`** no corre el workflow: después del FE intra-mes,
-por cada mes de búsqueda corre una ronda de la genética, toma las 20 mejores
-fórmulas distintas y 20 al azar de la misma gramática, y mide las 40 en los
-meses posteriores con 3 semillas de LightGBM, contra la base sin fórmula.
-Responde si lo que elige la genética en un mes sigue sirviendo después, más
-que una fórmula cualquiera, sin pasar por el modelo final. Graba
-`transferencia.txt` (una fila por medición; es también el checkpoint),
-`transferencia_formulas.txt` y `transferencia_resumen.txt`, manda el resumen
-por mail y termina. Con los defaults del grupo A son unas 8 h en
-`to-128ram-12vcpu` (estimado con los ~30 s por fórmula de WF9501).
+Un mail por generación con la tabla de arriba, y el registro final dice
+cuántas generadas usa el modelo final y en qué puestos.
 
-En grupo B la corrida graba además `ganancia_meseta.txt`: el promedio de la
-ganancia en 202107 en los 9 cortes fijos (8.000 a 12.000 envíos). Es la
-métrica para comparar corridas; el máximo de la curva se elige mirando la
-respuesta y no sirve para eso.
+**Variables del `.env`** (todas opcionales):
 
-**¿La genética mejora el modelo final?** Eso no se ve en una corrida del LB
-público (el desvío de la diferencia entre dos corridas ronda los 7 M). Para
-eso está el [experimento de brazos](brazos/README.md): grupo B, las 10
-semillas asignadas pareadas, sin genética vs. genética (fitness con 6 meses y
-con todos) vs. fórmulas al azar.
+| Variable | Default | Qué hace |
+|---|---|---|
+| `GA_MODO` | `evolutivo` | `evolutivo` o `nada` (sin FE evolutivo, la base) |
+| `EV_SELECCION` | `importancia` | `azar`: padres y sobrevivientes al azar (el control de si la importancia sirve) |
+| `EV_GENERACIONES` | 10 | |
+| `EV_TOPE` | 0 | tamaño de la población; 0 = las columnas con las que llega el dataset |
+| `EV_HIJOS` | 1 | nacimientos por generación, en veces el tope |
+| `EV_CLONES` | 0.1 | fracción de los nacimientos que son clones |
+| `EV_PRESION` | 10 | cuántas veces más probable es el primero de la importancia que el último |
+| `EV_SEMILLAS_N` | 1 | LightGBM por generación (importancia promediada) |
+| `EV_VALIDA` | A 202103, B 202101 | mes de validación del fitness |
+| `EV_VENTANA` | 3 | meses de entrenamiento del fitness antes del de validación, con 1 de gap (0 = todos desde 201901) |
+| `EV_UNDERSAMPLING` | 0.2 | fracción de CONTINUA en el fitness |
+| `EV_ALFA` | 1 | pesos `alfa^k` por mes en el fitness |
+| `EV_PARAM_BO` | 1 | 0: fitness con el LightGBM chico aunque haya `HT_FIJO` |
+| `EV_BORRAR_MUERTAS` | 1 | 0: las originales muertas quedan en el dataset |
+| `CN_RUN` | 0 con evolutivo, 1 sin | correr canaritos |
+| `FT_ALFA` | 1 | pesos `alfa^k` por mes en el final train (k = meses antes del último); la clase sugirió 0.95 |
+| `HT_FIJO` | | ruta a un `BO_log.txt` de otra corrida: se usa su mejor fila y no se corre la BO |
+| `FT_SEMILLAS_N` | 9 | cuántas semillas del semillerío final usar |
+| `FT_UNDERSAMPLING` | 1 | fracción de CONTINUA en el final train |
+| `KAGGLE_SUBIR=0` | | grupo A sin subir a Kaggle (los CSV quedan igual) |
+
+Las variables `GA_FORZAR`, `GA_VALIDA_*`, `GA_VENTANA`, `GA_RONDAS`, `TRF_*`
+y los modos `genetica`, `azar` y `transferencia` de la v2 ya no existen.
+
+En grupo B la corrida graba `ganancia_202107.txt` (los 9 cortes y, en la
+última fila, el máximo de la curva), `ganancia_maximo.txt` y
+`ganancia_meseta.txt`. La comparación entre brazos usa el **máximo** por
+semilla con Wilcoxon apareado (lo que pidió la clase) y la meseta como
+secundaria.
+
+**Prueba:** `tests/test_evolutivo.R` corre el evolutivo sobre un dataset
+sintético de 20 variables (segundos) y verifica que la población quede en el
+tope, que haya clones, recombinación entre generaciones, el conteo de
+fórmulas, que se retome desde el checkpoint y que las fórmulas se recalculen
+igual en el dataset entero:
+
+```bash
+Rscript tests/test_evolutivo.R 635_workflow_senior.R
+```
+
+**¿El evolutivo mejora el modelo final?** Para eso está el
+[experimento de brazos](brazos/README.md): grupo B, 10 semillas pareadas,
+base vs. evolutivo vs. evolutivo con selección al azar vs. sin clones.
 
 ## Puesta en marcha
 
@@ -199,7 +193,7 @@ El script manda los mails desde una cuenta de Gmail con una **app password**
 Los mails llegan en **dos hilos** por experimento: `[WF<exp> grupo A]
 experimento` (arranque, fin de cada etapa con sus tiempos, errores, VM
 expropiada, registro final) e `[WF<exp> grupo A] iteraciones` (cada
-generación de la genética y el avance de la BO).
+generación del evolutivo y el avance de la BO).
 
 ### 3. Kaggle (solo grupo A)
 
