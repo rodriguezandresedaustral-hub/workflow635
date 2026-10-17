@@ -2537,7 +2537,7 @@ if (GRUPO == "A") {
   envios_max <- which.max(tb_prediccion$ganancia_acum)
   tb_ganancia <- rbind(tb_ganancia,
     data.table(envios= envios_max, ganancia= tb_prediccion$ganancia_acum[envios_max]))
-  fwrite(tb_ganancia, "ganancia_202107.txt", sep= "\t")
+  fwrite(tb_ganancia, "ganancia_202107.txt", sep= "\t", scipen= 50)
   # v3: la metrica de la clase para comparar brazos es el MAXIMO de la curva
   # por semilla (Wilcoxon apareado); la meseta (promedio de los cortes fijos)
   # queda como metrica secundaria
@@ -2574,7 +2574,9 @@ texto_registro_evolutivo <- function() {
     " variables usadas; en el top 50: ", sum(head(es_ev, 50)), ", en el top 100: ", sum(head(es_ev, 100)),
     "; gain de las generadas: ", round(100 * sum(impo$Gain[es_ev]) / sum(impo$Gain), 1), "%",
     if (any(es_ev)) paste0("\nLas 10 generadas mas importantes:\n",
-      paste0("  ", which(es_ev)[1:min(10, sum(es_ev))], ". ", head(impo$Feature[es_ev], 10), collapse= "\n")) else "")
+      { top <- head(impo$Feature[es_ev], 10)
+        pob <- if (file.exists(ARCH_EV_POB)) fread(ARCH_EV_POB, sep= "\t") else data.table(nombre= character(), formula= character())
+        paste0("  ", which(es_ev)[seq_along(top)], ". ", top, "  ", pob$formula[match(top, pob$nombre)], collapse= "\n") }) else "")
 }
 
 horas <- as.numeric(difftime(Sys.time(), T_INICIO, units= "hours"))
