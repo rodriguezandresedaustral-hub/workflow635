@@ -136,10 +136,11 @@ PARAM$FE_rf$run <- TRUE
 # La poblacion son TODAS las columnas del dataset (despues del FE historico y
 # del de random forest). Cada generacion:
 #   1. el LightGBM de canaritos de la catedra (z635 celda 66: sus mismos
-#      parametros, entrena 202101-202103 con el 10% de los CONTINUA y valida
-#      202105 con early stopping sobre la ganancia meseta) entrena con toda la
-#      poblacion y da la importancia (Gain) de cada columna. No hay un LightGBM
-#      propio del evolutivo: el que decide por importancia es el de la catedra
+#      parametros, con early stopping sobre la ganancia meseta) entrena con
+#      toda la poblacion y con todo lo posible: todos los meses con clase menos
+#      los reservados del grupo y todos los CONTINUA (PARAM$EV$imp). Da la
+#      importancia (Gain) de cada columna. No hay un LightGBM propio del
+#      evolutivo: el modelo es el de la catedra
 #   2. reproduccion (X * 1): pasa igual a la generacion siguiente toda
 #      variable que el modelo uso (importancia > 0), sea original o formula.
 #      Lo que fue bueno sigue sin cambiar; lo que el modelo no uso no pasa.
@@ -174,6 +175,19 @@ PARAM$EV$min_hijos    <- as.numeric(env_o("EV_MIN_HIJOS", "0.25"))  # lugares mi
 PARAM$EV$presion      <- as.numeric(env_o("EV_PRESION", "10"))  # el mejor puesto es X veces mas probable que el peor
 PARAM$EV$semillas_n   <- as.integer(env_o("EV_SEMILLAS_N", "1"))  # LightGBM por generacion (importancia promedio)
 PARAM$EV$borrar_muertas <- env_o("EV_BORRAR_MUERTAS", "1") == "1"   # 1: las originales muertas salen del dataset
+# la importancia del evolutivo usa todo lo posible: todas las columnas, todos
+# los meses con clase menos los reservados de cada grupo, y todos los CONTINUA.
+#   A: entrena 201901-202103, valida 202105 (202104 de gap, como canaritos);
+#      nunca 202107 (validacion de la BO) ni 202109 (Kaggle)
+#   B: lo mismo corrido dos meses: entrena 201901-202101, valida 202103;
+#      nunca 202105 ni 202107
+# EV_UNDERSAMPLING: fraccion de los CONTINUA (1 = todos; 0.2 = como la
+# training strategy de la catedra, si el tiempo no da)
+PARAM$EV$imp <- list(
+  training= if (GRUPO == "A") c(201901:201912, 202001:202012, 202101:202103)
+            else c(201901:201912, 202001:202012, 202101),
+  validation= if (GRUPO == "A") 202105L else 202103L,
+  undersampling= as.numeric(env_o("EV_UNDERSAMPLING", "1")))
 # canaritos: con el evolutivo no se corre (achica el dataset a ~450 columnas y
 # eso es justo lo que no queremos). CN_RUN=1 lo prende igual
 PARAM$CN$run <- env_o("CN_RUN", if (PARAM$GA$modo == "evolutivo") "0" else "1") == "1"
@@ -355,37 +369,40 @@ ev_evaluar <- function(formula, tabla) {
   calcular(str2lang(formula))
 }
 
-# la muestra de la importancia: la misma que arma CanaritosAsesinos (z635
-# celda 66) con PARAM$CN$train (celda 67): training en PARAM$CN$train$training
-# con todos los BAJA+1/BAJA+2 y el PARAM$CN$train$undersampling de los
-# CONTINUA, validation en PARAM$CN$train$validation, peso 1.0000001 a los
-# BAJA+2 (asi fganancia_lgbm_meseta los reconoce). El sorteo del
-# undersampling usa su propia semilla y deja el RNG como estaba (las
-# canaritos de la catedra, que aca no se agregan, consumen numeros antes)
-ev_muestra <- function(originales) {
+# la muestra de la importancia: todo lo posible. Entrena con todos los meses
+# de PARAM$EV$imp$training (todos los BAJA+1/BAJA+2 y el
+# PARAM$EV$imp$undersampling de los CONTINUA: 1 = todos) y valida en
+# PARAM$EV$imp$validation, con el peso 1.0000001 a los BAJA+2 de la catedra
+# (asi fganancia_lgbm_meseta los reconoce). Las columnas NO se copian aca: van
+# como vectores al entorno V (ver correr_evolutivo), para no tener la muestra
+# dos veces en RAM. El sorteo del undersampling usa su propia semilla y deja
+# el RNG como estaba
+ev_muestra <- function() {
   s <- new.env()
   rng <- get0(".Random.seed", envir= globalenv())
   set.seed(PARAM$semilla_primigenia, kind = "L'Ecuyer-CMRG")
   azar <- runif(nrow(dataset))
   if (!is.null(rng)) assign(".Random.seed", rng, envir= globalenv())
-  cn <- PARAM$CN$train
-  uno <- dataset$clase_ternaria %in% cn$clase01_valor1
-  entrena <- dataset$foto_mes %in% cn$training & (uno | azar < cn$undersampling)
-  valida <- dataset$foto_mes %in% cn$validation
-  s$datos <- dataset[entrena | valida, c("foto_mes", "clase_ternaria", originales), with= FALSE]
-  s$es_valid <- s$datos$foto_mes %in% cn$validation
-  s$label <- as.integer(s$datos$clase_ternaria %in% cn$clase01_valor1)
-  s$peso <- ifelse(s$datos$clase_ternaria %in% cn$positivos, 1.0000001, 1.0)
-  s$gan_valid <- ifelse(s$datos$clase_ternaria[s$es_valid] == "BAJA+2",
-                        PARAM$ganancia$acierto, PARAM$ganancia$error)
-  loguear("evolutivo: muestra de canaritos - entrena", paste(range(cn$training), collapse= "-"),
-          "con", sum(!s$es_valid), "filas, valida", paste(cn$validation, collapse= ","),
-          "con", sum(s$es_valid))
+  imp <- PARAM$EV$imp
+  uno <- dataset$clase_ternaria %in% PARAM$CN$train$clase01_valor1
+  entrena <- dataset$foto_mes %in% imp$training & (uno | azar < imp$undersampling)
+  valida <- dataset$foto_mes %in% imp$validation
+  s$filas <- which(entrena | valida)
+  clase <- dataset$clase_ternaria[s$filas]
+  s$es_valid <- dataset$foto_mes[s$filas] %in% imp$validation
+  s$label <- as.integer(clase %in% PARAM$CN$train$clase01_valor1)
+  s$peso <- ifelse(clase %in% PARAM$CN$train$positivos, 1.0000001, 1.0)
+  s$gan_valid <- ifelse(clase[s$es_valid] == "BAJA+2", PARAM$ganancia$acierto, PARAM$ganancia$error)
+  loguear("evolutivo: muestra de la importancia - entrena", paste(range(imp$training), collapse= "-"),
+          "con", sum(!s$es_valid), "filas (", imp$undersampling, "de los CONTINUA), valida",
+          paste(imp$validation, collapse= ","), "con", sum(s$es_valid))
   s
 }
 
 # los parametros del LightGBM de CanaritosAsesinos (z635 celda 66), copiados
-# tal cual; la semilla se pone en cada entrenamiento
+# tal cual salvo num_threads: la catedra usa 1 y aca van todos los nucleos de
+# la VM (con ~4 M de filas por generacion; cambia la velocidad, no el modelo).
+# La semilla se pone en cada entrenamiento
 ev_param <- function() list(
   objective = "binary",
   metric = "custom",
@@ -405,32 +422,43 @@ ev_param <- function() list(
   min_data_in_leaf = 260,
   num_leaves = 60,
   early_stopping_rounds = 200,
-  num_threads = 1
+  num_threads = parallel::detectCores()
 )
+
+# arma la matriz de las filas idx con las columnas de V, sin copias intermedias
+ev_matriz <- function(nombres, V, idx) {
+  X <- matrix(0, nrow= length(idx), ncol= length(nombres), dimnames= list(NULL, nombres))
+  for (j in seq_along(nombres)) X[, j] <- V[[nombres[j]]][idx]
+  X
+}
 
 # entrena el LightGBM de canaritos con las columnas de V (env nombre -> vector)
 # y devuelve la importancia (Gain; 0 si no se uso) y la ganancia en la
 # validation: meseta (promedio de las 500 mejores ganancias acumuladas) y
-# maximo de la curva
+# maximo de la curva. RAM: la matriz de training se arma, LightGBM la pasa a
+# sus bins y se libera antes de entrenar
 ev_entrenar <- function(nombres, V, s, semillas) {
-  X <- do.call(cbind, mget(nombres, envir= V))
-  colnames(X) <- nombres
+  tr <- which(!s$es_valid); va <- which(s$es_valid)
+  Xtr <- ev_matriz(nombres, V, tr)
+  dtr <- lgb.Dataset(Xtr, label= s$label[tr], weight= s$peso[tr], free_raw_data= TRUE,
+                     params= list(max_bin= EV$param$max_bin, feature_pre_filter= FALSE))
+  lgb.Dataset.construct(dtr)
+  rm(Xtr); gc(verbose= FALSE)
+  Xva <- ev_matriz(nombres, V, va)
+  dva <- lgb.Dataset.create.valid(dtr, Xva, label= s$label[va], weight= s$peso[va])
   res <- lapply(semillas, function(sem) {
-    dtr <- lgb.Dataset(X[!s$es_valid, , drop= FALSE], label= s$label[!s$es_valid],
-                       weight= s$peso[!s$es_valid], free_raw_data= FALSE)
-    dva <- lgb.Dataset(X[s$es_valid, , drop= FALSE], label= s$label[s$es_valid],
-                       weight= s$peso[s$es_valid], free_raw_data= FALSE)
     p <- EV$param
     p$seed <- sem
     m <- lgb.train(data= dtr, valids= list(valid= dva), eval= fganancia_lgbm_meseta,
                    param= p, verbose= -100)
-    gan_acum <- cumsum(s$gan_valid[order(-predict(m, X[s$es_valid, , drop= FALSE]))])
+    gan_acum <- cumsum(s$gan_valid[order(-predict(m, Xva))])
     im <- as.data.table(lgb.importance(m))
     imp <- setNames(rep(0, length(nombres)), nombres)
     imp[im$Feature] <- im$Gain
     list(imp= imp, meseta= mean(sort(gan_acum, decreasing= TRUE)[1:min(500, length(gan_acum))]),
          maximo= max(gan_acum))
   })
+  rm(dtr, dva, Xva); gc(verbose= FALSE)
   list(imp= Reduce(`+`, lapply(res, `[[`, "imp")) / length(res),
        meseta= mean(sapply(res, `[[`, "meseta")),
        maximo= mean(sapply(res, `[[`, "maximo")))
@@ -476,16 +504,18 @@ correr_evolutivo <- function() {
           ", importancia con el LightGBM de canaritos (", EV$param$num_leaves, "hojas, early stopping",
           EV$param$early_stopping_rounds, ")")
 
-  s <- ev_muestra(originales)
+  s <- ev_muestra()
   V <- new.env()
-  for (n in originales) assign(n, as.numeric(s$datos[[n]]), envir= V)
+  for (n in originales) assign(n, as.numeric(dataset[[n]][s$filas]), envir= V)
 
   if (file.exists(CK_EV)) {
     e <- readRDS(CK_EV)
     EV$pob <- e$pob; EV$nacidas_acum <- e$nacidas_acum
     g0 <- e$g
     assign(".Random.seed", e$rng, envir= globalenv())
-    for (i in which(!EV$pob$original)) assign(EV$pob$nombre[i], ev_evaluar(EV$pob$formula[i], s$datos), envir= V)
+    for (i in which(!EV$pob$original)) assign(EV$pob$nombre[i], ev_evaluar(EV$pob$formula[i], V), envir= V)
+    # las originales que ya no estan en la poblacion no se usan mas
+    rm(list= setdiff(originales, EV$pob$nombre), envir= V)
     loguear("evolutivo: retomo despues de la generacion", g0)
   } else {
     set.seed(PARAM$semilla_primigenia, kind = "L'Ecuyer-CMRG")
@@ -560,10 +590,11 @@ correr_evolutivo <- function() {
 
     # --- la generacion nueva: copias + hijos, medidas juntas -------------------
     EV$pob <- rbind(sigue, if (nrow(hijos)) hijos[, names(pob), with= FALSE])
+    # lo que no pasa ya no se usa, ni como padre: sale de V antes de entrenar,
+    # asi en RAM hay una sola poblacion. Al retomar, V se rearma desde el dataset
+    if (nrow(no_pasa)) rm(list= no_pasa$nombre, envir= V)
     r <- ev_entrenar(EV$pob$nombre, V, s, semillas)
     EV$pob[, importancia := unname(r$imp[nombre])]
-    # las formulas que no pasan no se vuelven a usar (las originales quedan en s$datos)
-    if (nrow(no_pasa[original == FALSE])) rm(list= no_pasa[original == FALSE, nombre], envir= V)
 
     ev_log_generacion(data.table(generacion= g, poblacion_inicio= pob_inicio,
       usadas= sum(EV$pob$importancia > 0), copias= nrow(sigue), uso_minimo_hijos= uso_minimo,
@@ -661,8 +692,8 @@ mandar_mail("arranco",
            if (PARAM$EV$tope > 0) PARAM$EV$tope else "columnas iniciales",
            ", minimo de hijos ", PARAM$EV$min_hijos, ", presion ", PARAM$EV$presion,
            ", importancia con el LightGBM de canaritos (entrena ",
-           paste(range(PARAM$CN$train$training), collapse= "-"), ", valida ",
-           paste(PARAM$CN$train$validation, collapse= ","), ")"), "\n",
+           paste(range(PARAM$EV$imp$training), collapse= "-"), " con ", PARAM$EV$imp$undersampling,
+           " de los CONTINUA, valida ", paste(PARAM$EV$imp$validation, collapse= ","), ")"), "\n",
          "Canaritos: ", if (PARAM$CN$run) "si" else "no", ", FT_ALFA ", PARAM$FT$alfa, "\n",
          if (nzchar(PARAM$BO$ht_fijo)) paste0("HT fijo: ", PARAM$BO$ht_fijo, "\n"),
          "Final train: undersampling ", PARAM$FT$undersampling, " de los CONTINUA\n",

@@ -57,11 +57,14 @@ quién se reproduce y quién muere.
 Cada generación (`GA_MODO=evolutivo`):
 
 1. **Importancia:** el LightGBM de canaritos de la cátedra (z635 celda 66,
-   con sus mismos parámetros, meses y undersampling de la celda 67: entrena
-   202101-202103 con el 10 % de los CONTINUA y valida 202105 con early
-   stopping sobre la ganancia meseta) entrena con **todas** las columnas
-   vivas y da la importancia (gain) de cada una. El evolutivo no tiene un
-   LightGBM propio. La ganancia en 202105 queda en el registro.
+   con sus mismos parámetros y early stopping sobre la ganancia meseta)
+   entrena con **todo lo posible**: todas las columnas de la población, todos
+   los meses con clase menos los reservados del grupo y todos los CONTINUA.
+   En el grupo A entrena 201901-202103 y valida 202105 (nunca 202107 ni
+   202109); en el B, 201901-202101 y valida 202103. Usa todos los núcleos de
+   la VM (la cátedra usa 1; cambia la velocidad, no el modelo). Da la
+   importancia (gain) de cada columna. El evolutivo no tiene un LightGBM
+   propio. La ganancia en el mes de validación queda en el registro.
 2. **Reproducción (`X * 1`):** pasa igual a la generación siguiente **toda
    variable que el modelo usó** (importancia > 0), sea original o fórmula. Lo
    que fue bueno sigue sin cambiar y lo que el modelo no usó no pasa: la
@@ -106,6 +109,7 @@ cuántas generadas usa el modelo final y en qué puestos.
 | `EV_SELECCION` | `importancia` | `azar`: las copias (la misma cantidad) y los padres al azar (el control de si la importancia sirve) |
 | `EV_GENERACIONES` | 10 | |
 | `EV_TOPE` | 0 | tamaño de la población; 0 = las columnas con las que llega el dataset |
+| `EV_UNDERSAMPLING` | 1 | fracción de los CONTINUA en el LightGBM de la importancia (1 = todos) |
 | `EV_MIN_HIJOS` | 0.25 | lugares mínimos para hijos, en fracción del tope (1 = sin copias `X * 1`) |
 | `EV_PRESION` | 10 | cuántas veces más probable es el primero de la importancia que el último |
 | `EV_SEMILLAS_N` | 1 | LightGBM por generación (importancia promediada) |
