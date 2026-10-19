@@ -188,6 +188,22 @@ PARAM$EV$imp <- list(
             else c(201901:201912, 202001:202012, 202101),
   validation= if (GRUPO == "A") 202105L else 202103L,
   undersampling= as.numeric(env_o("EV_UNDERSAMPLING", "1")))
+# mes de prueba: un mes con clase que el evolutivo NUNCA usa para decidir.
+# En cada generacion el LightGBM de la importancia lo predice y la ganancia
+# queda en el registro: es la medida de si la poblacion mejora fuera de lo
+# que vio. A: 202107 (la validacion de la BO, que el evolutivo no toca);
+# B: 202105
+PARAM$EV$imp$prueba <- if (GRUPO == "A") 202107L else 202105L
+# EV_SOLO=1: corrida de busqueda. Hace el FE, corre el evolutivo, graba la
+# poblacion y las mejores formulas y termina: sin BO, sin modelo final, sin
+# Kaggle. EV_CONTROL=1 (con EV_SOLO): en la misma corrida y sobre el mismo
+# dataset corre despues el evolutivo con seleccion al azar (archivos *_azar),
+# para comparar las dos curvas en el mes de prueba.
+# EV_POBLACION_DESDE: ruta a un evolutivo_poblacion.txt de una busqueda. No
+# evoluciona: mete esa poblacion al dataset y sigue con el workflow completo
+PARAM$EV$solo <- env_o("EV_SOLO", "0") == "1"
+PARAM$EV$control <- env_o("EV_CONTROL", "0") == "1"
+PARAM$EV$poblacion_desde <- env_o("EV_POBLACION_DESDE", "")
 # canaritos: con el evolutivo no se corre (achica el dataset a ~450 columnas y
 # eso es justo lo que no queremos). CN_RUN=1 lo prende igual
 PARAM$CN$run <- env_o("CN_RUN", if (PARAM$GA$modo == "evolutivo") "0" else "1") == "1"
@@ -339,6 +355,15 @@ ARCH_EV_GEN <- "evolutivo_generaciones.txt"
 ARCH_EV_NAC <- "evolutivo_nacimientos.txt"
 ARCH_EV_POB <- "evolutivo_poblacion.txt"
 CK_EV <- "checkpoints/evolutivo.rds"
+ARCH_EV_MEJ <- "evolutivo_mejores.txt"
+# los archivos del evolutivo, con un sufijo para el control al azar (EV_CONTROL)
+ev_archivos <- function(sufijo= "") {
+  ARCH_EV_GEN <<- paste0("evolutivo_generaciones", sufijo, ".txt")
+  ARCH_EV_NAC <<- paste0("evolutivo_nacimientos", sufijo, ".txt")
+  ARCH_EV_POB <<- paste0("evolutivo_poblacion", sufijo, ".txt")
+  ARCH_EV_MEJ <<- paste0("evolutivo_mejores", sufijo, ".txt")
+  CK_EV <<- paste0("checkpoints/evolutivo", sufijo, ".rds")
+}
 # columnas que no son variables (no entran a la poblacion)
 EV_NO_VARIABLES <- c("numero_de_cliente", "foto_mes", "clase_ternaria", "clase01",
                      "entrenamiento", "azar", "fold_train", "fold_final_train")
@@ -387,15 +412,19 @@ ev_muestra <- function() {
   uno <- dataset$clase_ternaria %in% PARAM$CN$train$clase01_valor1
   entrena <- dataset$foto_mes %in% imp$training & (uno | azar < imp$undersampling)
   valida <- dataset$foto_mes %in% imp$validation
-  s$filas <- which(entrena | valida)
+  prueba <- dataset$foto_mes %in% imp$prueba
+  s$filas <- which(entrena | valida | prueba)
   clase <- dataset$clase_ternaria[s$filas]
   s$es_valid <- dataset$foto_mes[s$filas] %in% imp$validation
+  s$es_prueba <- dataset$foto_mes[s$filas] %in% imp$prueba
   s$label <- as.integer(clase %in% PARAM$CN$train$clase01_valor1)
   s$peso <- ifelse(clase %in% PARAM$CN$train$positivos, 1.0000001, 1.0)
   s$gan_valid <- ifelse(clase[s$es_valid] == "BAJA+2", PARAM$ganancia$acierto, PARAM$ganancia$error)
+  s$gan_prueba <- ifelse(clase[s$es_prueba] == "BAJA+2", PARAM$ganancia$acierto, PARAM$ganancia$error)
   loguear("evolutivo: muestra de la importancia - entrena", paste(range(imp$training), collapse= "-"),
           "con", sum(!s$es_valid), "filas (", imp$undersampling, "de los CONTINUA), valida",
-          paste(imp$validation, collapse= ","), "con", sum(s$es_valid))
+          paste(imp$validation, collapse= ","), "con", sum(s$es_valid), "| prueba",
+          paste(imp$prueba, collapse= ","), "con", sum(s$es_prueba))
   s
 }
 
@@ -438,7 +467,7 @@ ev_matriz <- function(nombres, V, idx) {
 # maximo de la curva. RAM: la matriz de training se arma, LightGBM la pasa a
 # sus bins y se libera antes de entrenar
 ev_entrenar <- function(nombres, V, s, semillas) {
-  tr <- which(!s$es_valid); va <- which(s$es_valid)
+  tr <- which(!s$es_valid & !s$es_prueba); va <- which(s$es_valid); pr <- which(s$es_prueba)
   Xtr <- ev_matriz(nombres, V, tr)
   dtr <- lgb.Dataset(Xtr, label= s$label[tr], weight= s$peso[tr], free_raw_data= TRUE,
                      params= list(max_bin= EV$param$max_bin, feature_pre_filter= FALSE))
@@ -446,22 +475,29 @@ ev_entrenar <- function(nombres, V, s, semillas) {
   rm(Xtr); gc(verbose= FALSE)
   Xva <- ev_matriz(nombres, V, va)
   dva <- lgb.Dataset.create.valid(dtr, Xva, label= s$label[va], weight= s$peso[va])
+  Xpr <- ev_matriz(nombres, V, pr)
   res <- lapply(semillas, function(sem) {
     p <- EV$param
     p$seed <- sem
     m <- lgb.train(data= dtr, valids= list(valid= dva), eval= fganancia_lgbm_meseta,
                    param= p, verbose= -100)
     gan_acum <- cumsum(s$gan_valid[order(-predict(m, Xva))])
+    # el mes de prueba: solo se mira, no decide nada
+    gan_pr <- cumsum(s$gan_prueba[order(-predict(m, Xpr))])
     im <- as.data.table(lgb.importance(m))
     imp <- setNames(rep(0, length(nombres)), nombres)
     imp[im$Feature] <- im$Gain
     list(imp= imp, meseta= mean(sort(gan_acum, decreasing= TRUE)[1:min(500, length(gan_acum))]),
-         maximo= max(gan_acum))
+         maximo= max(gan_acum),
+         meseta_prueba= mean(sort(gan_pr, decreasing= TRUE)[1:min(500, length(gan_pr))]),
+         maximo_prueba= max(gan_pr))
   })
-  rm(dtr, dva, Xva); gc(verbose= FALSE)
+  rm(dtr, dva, Xva, Xpr); gc(verbose= FALSE)
   list(imp= Reduce(`+`, lapply(res, `[[`, "imp")) / length(res),
        meseta= mean(sapply(res, `[[`, "meseta")),
-       maximo= mean(sapply(res, `[[`, "maximo")))
+       maximo= mean(sapply(res, `[[`, "maximo")),
+       meseta_prueba= mean(sapply(res, `[[`, "meseta_prueba")),
+       maximo_prueba= mean(sapply(res, `[[`, "maximo_prueba")))
 }
 
 # probabilidad de reproducirse / sobrevivir: ranking lineal por importancia.
@@ -487,13 +523,13 @@ ev_grabar_estado <- function(g) {
 
 ev_log_generacion <- function(fila) {
   fwrite(fila, ARCH_EV_GEN, sep= "\t", append= file.exists(ARCH_EV_GEN))
-  loguear(sprintf("evolutivo gen %d: poblacion %d (%d originales, %d generadas), %d usadas, %d pasan (X * 1)%s, nacen %d, no pasan %d, prof max %d, meseta %s, max %s",
+  loguear(sprintf("evolutivo gen %d: poblacion %d (%d originales, %d generadas), %d usadas, %d pasan (X * 1)%s, nacen %d, no pasan %d, prof max %d, meseta %s, max %s, prueba meseta %s",
     fila$generacion, fila$poblacion, fila$originales_vivas, fila$generadas_vivas, fila$usadas, fila$copias,
     if (isTRUE(fila$uso_minimo_hijos)) " (minimo de hijos)" else "", fila$nacidas, fila$no_pasan,
-    fila$prof_max, miles(fila$ganancia_meseta), miles(fila$ganancia_max)))
+    fila$prof_max, miles(fila$ganancia_meseta), miles(fila$ganancia_max), miles(fila$ganancia_meseta_prueba)))
 }
 
-correr_evolutivo <- function() {
+correr_evolutivo <- function(materializar= TRUE) {
   originales <- setdiff(names(dataset)[sapply(dataset, is.numeric)], EV_NO_VARIABLES)
   originales <- originales[!startsWith(originales, "canarito")]
   tope <- if (PARAM$EV$tope > 0) PARAM$EV$tope else length(originales)
@@ -532,6 +568,7 @@ correr_evolutivo <- function() {
       originales_vivas= length(originales), generadas_vivas= 0L, prof_max= 0L, prof_media= 0,
       padres_de_generaciones_distintas= NA_real_, nacidas_acumuladas= 0L,
       importancia_generadas= 0, ganancia_meseta= r$meseta, ganancia_max= r$maximo,
+      ganancia_meseta_prueba= r$meseta_prueba, ganancia_max_prueba= r$maximo_prueba,
       segundos= round(as.numeric(difftime(Sys.time(), t0, units= "secs")))))
     ev_grabar_estado(0L)
   }
@@ -605,6 +642,7 @@ correr_evolutivo <- function() {
       nacidas_acumuladas= EV$nacidas_acum,
       importancia_generadas= round(sum(EV$pob[original == FALSE, importancia]) / max(sum(EV$pob$importancia), 1e-12), 4),
       ganancia_meseta= r$meseta, ganancia_max= r$maximo,
+      ganancia_meseta_prueba= r$meseta_prueba, ganancia_max_prueba= r$maximo_prueba,
       segundos= round(as.numeric(difftime(Sys.time(), t0, units= "secs")))))
     ev_grabar_estado(g)
     gc(verbose= FALSE)
@@ -612,14 +650,27 @@ correr_evolutivo <- function() {
       mandar_mail(sprintf("evolutivo generacion %d", g), texto_evolutivo(), hilo= "iteraciones")
   }
 
-  # --- la poblacion final entra al dataset entero ---------------------------
+  # --- la poblacion final ---------------------------------------------------
   pob <- EV$pob
   fwrite(pob[order(-importancia)], ARCH_EV_POB, sep= "\t")
-  # RAM: cada original muerta se borra apenas la calculo la ultima formula que
-  # la usa (si no, el pico es el dataset con todas las generadas Y todas las muertas)
+  # las mejores formulas: las generadas que el ultimo modelo uso, por importancia
+  fwrite(pob[original == FALSE & importancia > 0][order(-importancia),
+             .(nombre, formula, nacio, prof, importancia)], ARCH_EV_MEJ, sep= "\t")
+  if (materializar) ev_materializar(pob, originales)
+  texto_evolutivo()
+}
+
+# mete una poblacion al dataset entero: las formulas se recalculan con los
+# nombres de las columnas originales. RAM: cada original muerta se borra
+# apenas la calculo la ultima formula que la usa (si no, el pico es el dataset
+# con todas las generadas Y todas las muertas)
+ev_materializar <- function(pob, originales) {
   muertas_ori <- setdiff(originales, pob$nombre)
   generadas <- which(!pob$original)
   usa <- lapply(pob$formula[generadas], function(f) all.names(str2lang(f), functions= FALSE))
+  faltan <- setdiff(c(pob$nombre[pob$original], unlist(usa)), names(dataset))
+  if (length(faltan)) stop("la poblacion usa columnas que no estan en el dataset: ",
+                           paste(head(faltan, 10), collapse= ", "))
   ultima <- vapply(muertas_ori, function(n) max(c(0L, which(vapply(usa, function(u) n %in% u, logical(1))))), integer(1))
   borrar <- function(cols) if (PARAM$EV$borrar_muertas && length(cols)) dataset[, (cols) := NULL]
   borrar(muertas_ori[ultima == 0L])
@@ -628,10 +679,68 @@ correr_evolutivo <- function() {
     dataset[, (pob$nombre[i]) := ev_evaluar(pob$formula[i], dataset)]
     borrar(muertas_ori[ultima == j])
   }
-  loguear("evolutivo: el dataset queda con", sum(!pob$original), "generadas y",
+  loguear("evolutivo: el dataset queda con", length(generadas), "generadas y",
           sum(pob$original), "originales de", length(originales),
           if (PARAM$EV$borrar_muertas) "(las originales muertas se borran)" else "(las originales muertas quedan)")
-  texto_evolutivo()
+}
+
+# EV_POBLACION_DESDE: la poblacion de una busqueda entra al dataset sin evolucionar
+ev_desde <- function(arch) {
+  if (!file.exists(arch)) stop("EV_POBLACION_DESDE: no existe ", arch)
+  pob <- fread(arch, sep= "\t")
+  originales <- setdiff(names(dataset)[sapply(dataset, is.numeric)], EV_NO_VARIABLES)
+  originales <- originales[!startsWith(originales, "canarito")]
+  loguear("evolutivo: poblacion de", arch, "-", nrow(pob), "columnas,", sum(!pob$original), "formulas")
+  ev_materializar(pob, originales)
+  paste0("FE evolutivo: poblacion de ", arch, " (", nrow(pob), " columnas, ", sum(!pob$original),
+         " formulas; no se evoluciono en esta corrida)")
+}
+
+# la comparacion de la busqueda: la ganancia del LightGBM de la importancia en
+# el mes de prueba, generacion por generacion, con seleccion por importancia y
+# (si corrio el control) al azar, y las mejores formulas
+ev_comparacion <- function() {
+  leer <- function(a) if (file.exists(a)) fread(a, sep= "\t") else NULL
+  imp <- leer("evolutivo_generaciones.txt"); azar <- leer("evolutivo_generaciones_azar.txt")
+  mejores <- leer("evolutivo_mejores.txt")
+  fila <- function(g, d) if (is.null(d) || !(g %in% d$generacion)) "            -" else
+    sprintf("%13s", miles(d[generacion == g, ganancia_meseta_prueba]))
+  gens <- sort(unique(c(imp$generacion, azar$generacion)))
+  base <- imp[generacion == 0, ganancia_meseta_prueba]
+  paste0("Busqueda de formulas: ganancia meseta del LightGBM de la importancia en ",
+    PARAM$EV$imp$prueba, " (mes que el evolutivo no usa para decidir)\n\n",
+    "  gen    importancia          azar   importancia - gen 0\n",
+    paste(sprintf("  %3d  %s  %s  %13s", gens, sapply(gens, fila, imp), sapply(gens, fila, azar),
+      sapply(gens, function(g) if (g %in% imp$generacion) miles(imp[generacion == g, ganancia_meseta_prueba] - base) else "-")),
+      collapse= "\n"),
+    "\n\nComo leerlo: si la importancia encuentra formulas que sirven, su curva sube\n",
+    "y queda por encima de la del azar. Una diferencia de pocos millones entre dos\n",
+    "generaciones puede ser solo el cambio de columnas: lo que cuenta es la tendencia\n",
+    "y la distancia con el azar.\n\n",
+    if (!is.null(mejores) && nrow(mejores)) paste0("Las 20 mejores formulas (por importancia en la ultima generacion):\n",
+      paste(sprintf("  %8.5f  %s", head(mejores$importancia, 20), head(mejores$formula, 20)), collapse= "\n"),
+      "\n\nTodas en evolutivo_mejores.txt; la poblacion completa en evolutivo_poblacion.txt\n",
+      "(para la corrida completa: EV_POBLACION_DESDE con esa ruta)") else "")
+}
+
+# EV_SOLO: termina la corrida despues de la busqueda (y del control al azar)
+terminar_busqueda <- function() {
+  if (PARAM$EV$control) {
+    etapa("FE evolutivo de control (seleccion al azar)")
+    PARAM$EV$seleccion <<- "azar"
+    rm(list= ls(EV), envir= EV)
+    ev_archivos("_azar")
+    resumen_azar <- correr_evolutivo(materializar= FALSE)
+    ev_archivos()
+    PARAM$EV$seleccion <<- "importancia"
+    fin_etapa(resumen_azar)
+  }
+  resumen <- ev_comparacion()
+  writeLines(resumen, "evolutivo_busqueda.txt")
+  loguear(resumen)
+  mandar_mail("TERMINO (busqueda de formulas)", resumen)
+  writeLines(format(Sys.time()), "TERMINADO")
+  quit(save= "no", status= 0)
 }
 
 texto_evolutivo <- function() {
@@ -639,10 +748,11 @@ texto_evolutivo <- function() {
   if (!file.exists(ARCH_EV_GEN)) return("El evolutivo no termino ninguna generacion.")
   gen <- fread(ARCH_EV_GEN, sep= "\t")
   paste0("FE evolutivo (seleccion ", PARAM$EV$seleccion, ", tope ", max(gen$poblacion), "):\n",
-    paste(sprintf("  gen %2d: poblacion %5d | usadas %5d | pasan (X * 1) %5d%s | nacen %4d | originales vivas %5d | generadas %5d | prof max %2d | imp generadas %5.1f%% | meseta %s | max %s",
+    paste(sprintf("  gen %2d: poblacion %5d | usadas %5d | pasan (X * 1) %5d%s | nacen %4d | originales vivas %5d | generadas %5d | prof max %2d | imp generadas %5.1f%% | meseta %s | max %s | prueba %s",
       gen$generacion, gen$poblacion, gen$usadas, gen$copias, ifelse(gen$uso_minimo_hijos, "*", " "),
       gen$nacidas, gen$originales_vivas, gen$generadas_vivas, gen$prof_max,
-      100 * gen$importancia_generadas, miles(gen$ganancia_meseta), miles(gen$ganancia_max)), collapse= "\n"),
+      100 * gen$importancia_generadas, miles(gen$ganancia_meseta), miles(gen$ganancia_max),
+      miles(gen$ganancia_meseta_prueba)), collapse= "\n"),
     "\nFormulas nacidas en total: ", miles(max(gen$nacidas_acumuladas)),
     if (any(gen$uso_minimo_hijos)) "\n* = las usadas no entraban todas: se uso el minimo de lugares para hijos (EV_MIN_HIJOS)" else "")
 }
@@ -1953,9 +2063,16 @@ PARAM$CN$train$gan0 <- -0.025
   # LightGBM de canaritos (fganancia_lgbm_meseta y PARAM$CN$train), y antes
   # de la llamada de la celda 68
   if (PARAM$GA$modo == "evolutivo") {
-    etapa("FE evolutivo")
-    resumen_ev <- correr_evolutivo()
-    fin_etapa(resumen_ev)
+    if (nzchar(PARAM$EV$poblacion_desde)) {
+      etapa("FE evolutivo (poblacion de una busqueda)")
+      resumen_ev <- ev_desde(PARAM$EV$poblacion_desde)
+      fin_etapa(resumen_ev)
+    } else {
+      etapa("FE evolutivo")
+      resumen_ev <- correr_evolutivo(materializar= !PARAM$EV$solo)
+      fin_etapa(resumen_ev)
+      if (PARAM$EV$solo) terminar_busqueda()
+    }
   }
 
   etapa("canaritos")

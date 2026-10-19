@@ -28,7 +28,8 @@ PARAM <- list(semilla_primigenia= 100213, ganancia= list(acierto= 975000, error=
   BO= list(ht_fijo= ""), GA= list(modo= "evolutivo"),
   EV= list(seleccion= "importancia", generaciones= 4L, tope= 0L, min_hijos= 0.25, presion= 10,
            semillas_n= 1L, borrar_muertas= TRUE, mail_cada_gen= 1,
-           imp= list(training= c(202012, 202101, 202102, 202103), validation= 202105L, undersampling= 1)),
+           imp= list(training= c(202012, 202101, 202102, 202103), validation= 202105L, undersampling= 1,
+                     prueba= 202104L)),
   CN= list(train= list(clase01_valor1= c("BAJA+2", "BAJA+1"), positivos= c("BAJA+2"),
     training= c(202101, 202102, 202103), validation= c(202105), undersampling= 0.1,
     gan1= 0.975, gan0= -0.025)))
@@ -82,8 +83,12 @@ if (nrow(f)) ok(isTRUE(all.equal(dataset[[f$nombre]], ev_evaluar(f$formula, data
 ok(MAILS == 4, "un mail por generacion")
 ok(all(gen$ganancia_meseta != 0), "la ganancia sale de la validation de la importancia (202105)")
 s_imp <- ev_muestra()
-ok(length(s_imp$filas) == nrow(dataset0[foto_mes %in% c(202012, 202101, 202102, 202103, 202105)]),
-   "con EV_UNDERSAMPLING = 1 la importancia usa todas las filas de sus meses")
+ok(length(s_imp$filas) == nrow(dataset0[foto_mes %in% c(202012, 202101, 202102, 202103, 202104, 202105)]),
+   "con EV_UNDERSAMPLING = 1 la importancia usa todas las filas de sus meses (y el de prueba)")
+ok(sum(s_imp$es_prueba) == 3000 && !any(s_imp$es_prueba & s_imp$es_valid), "el mes de prueba (202104) queda aparte")
+ok(all(gen$ganancia_meseta_prueba != 0), "la ganancia en el mes de prueba queda en el registro")
+mej <- fread(ARCH_EV_MEJ)
+ok(nrow(mej) > 0 && all(mej$importancia > 0) && !is.unsorted(-mej$importancia), "evolutivo_mejores.txt: generadas usadas, por importancia")
 ok(inherits(try(ev_evaluar("system('ls')", dataset), silent= TRUE), "try-error"), "ev_evaluar no ejecuta codigo")
 
 # retomar: con el checkpoint en la ultima generacion no reentrena nada
@@ -98,4 +103,31 @@ PARAM$EV$seleccion <- "azar"; PARAM$EV$generaciones <- 2L
 dataset <- copy(dataset0)
 correr_evolutivo()
 ok(nrow(fread(ARCH_EV_GEN)) == 3, "EV_SELECCION=azar")
+
+# busqueda (EV_SOLO): sin materializar el dataset no cambia, y el control al
+# azar escribe sus propios archivos
+unlink(c(ARCH_EV_GEN, ARCH_EV_NAC, ARCH_EV_POB, ARCH_EV_MEJ, CK_EV))
+PARAM$EV$seleccion <- "importancia"; PARAM$EV$generaciones <- 3L
+dataset <- copy(dataset0)
+correr_evolutivo(materializar= FALSE)
+ok(identical(names(dataset), names(dataset0)) && isTRUE(all.equal(dataset, dataset0)), "EV_SOLO: el dataset no cambia")
+pob_busqueda <- fread(ARCH_EV_POB)
+rm(list= ls(EV), envir= EV)
+PARAM$EV$seleccion <- "azar"
+ev_archivos("_azar")
+correr_evolutivo(materializar= FALSE)
+ok(file.exists("evolutivo_generaciones_azar.txt") && file.exists("checkpoints/evolutivo_azar.rds") &&
+   nrow(fread("evolutivo_generaciones.txt")) == 4, "el control al azar escribe sus archivos y no pisa los de la busqueda")
+ev_archivos(); PARAM$EV$seleccion <- "importancia"
+comp <- ev_comparacion()
+ok(grepl("importancia", comp) && grepl("azar", comp) && length(strsplit(comp, "\n")[[1]]) > 8, "la comparacion tiene las dos curvas")
+
+# EV_POBLACION_DESDE: la poblacion de la busqueda entra al dataset sin evolucionar
+dataset <- copy(dataset0)
+ev_desde(ARCH_EV_POB)
+gen_b <- pob_busqueda[original == FALSE]
+ok(all(gen_b$nombre %in% names(dataset)), "EV_POBLACION_DESDE: las formulas de la busqueda estan en el dataset")
+ok(isTRUE(all.equal(dataset[[gen_b$nombre[1]]], ev_evaluar(gen_b$formula[1], dataset0))), "EV_POBLACION_DESDE: misma formula, mismos valores")
+ok(!any(setdiff(originales, pob_busqueda$nombre) %in% names(dataset)), "EV_POBLACION_DESDE: las originales que no pasaron salen")
+ok(inherits(try(ev_desde("no_existe.txt"), silent= TRUE), "try-error"), "EV_POBLACION_DESDE con un archivo que no existe corta")
 cat("TODO OK\n")

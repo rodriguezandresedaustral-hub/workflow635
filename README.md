@@ -89,6 +89,19 @@ muertas se borran. Canaritos no corre por defecto con el evolutivo: achica el
 dataset a ~450 columnas, justo lo contrario de lo que se busca (`CN_RUN=1` lo
 prende igual).
 
+**Mes de prueba.** En cada generación el LightGBM de la importancia predice
+también un mes con clase que el evolutivo nunca usa para decidir (A: 202107;
+B: 202105). Su ganancia queda en el registro (`ganancia_meseta_prueba`): dice si
+la población mejora fuera de lo que vio.
+
+**Búsqueda de fórmulas (`EV_SOLO=1`, `EV_CONTROL=1`).** Corre el FE y el
+evolutivo por importancia, después el mismo evolutivo con selección al azar
+sobre el mismo dataset, y termina. Graba `evolutivo_busqueda.txt` con las dos
+curvas en el mes de prueba y las mejores fórmulas, y `evolutivo_mejores.txt`.
+Si la curva por importancia sube y queda por encima de la del azar, la
+corrida completa usa esa población con `EV_POBLACION_DESDE`, sin volver a
+evolucionar.
+
 **Lo que queda registrado:**
 
 | Archivo | Qué |
@@ -110,6 +123,9 @@ cuántas generadas usa el modelo final y en qué puestos.
 | `EV_GENERACIONES` | 10 | |
 | `EV_TOPE` | 0 | tamaño de la población; 0 = las columnas con las que llega el dataset |
 | `EV_UNDERSAMPLING` | 1 | fracción de los CONTINUA en el LightGBM de la importancia (1 = todos) |
+| `EV_SOLO` | 0 | 1: corrida de búsqueda. FE + evolutivo, graba la población y las mejores fórmulas y termina (sin BO, modelo final ni Kaggle) |
+| `EV_CONTROL` | 0 | 1 (con `EV_SOLO`): en la misma corrida corre después el evolutivo con selección al azar, para comparar |
+| `EV_POBLACION_DESDE` | | ruta a un `evolutivo_poblacion.txt` de una búsqueda: no evoluciona, mete esa población y sigue con el workflow completo |
 | `EV_MIN_HIJOS` | 0.25 | lugares mínimos para hijos, en fracción del tope (1 = sin copias `X * 1`) |
 | `EV_PRESION` | 10 | cuántas veces más probable es el primero de la importancia que el último |
 | `EV_SEMILLAS_N` | 1 | LightGBM por generación (importancia promediada) |
