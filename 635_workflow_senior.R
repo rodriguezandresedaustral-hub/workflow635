@@ -143,6 +143,9 @@ PARAM$FE_rf$run <- TRUE
 #      evolutivo: el modelo es el de la catedra
 #   2. reproduccion (X * 1): pasa igual a la generacion siguiente toda
 #      variable que el modelo uso (importancia > 0), sea original o formula.
+#      Con EV_ORIGINALES_FIJAS (default) las originales pasan todas, siempre,
+#      y solo las formulas compiten, por EV_FORMULAS lugares: la genetica
+#      agrega columnas, no reemplaza las que el modelo necesita.
 #      Lo que fue bueno sigue sin cambiar; lo que el modelo no uso no pasa.
 #      La importancia decide que queda: no hay un corte nuestro. El unico
 #      resguardo es EV_MIN_HIJOS: si las usadas no entran todas dejandole ese
@@ -172,6 +175,12 @@ if (!(PARAM$EV$seleccion %in% c("importancia", "azar"))) stop("EV_SELECCION tien
 PARAM$EV$generaciones <- as.integer(env_o("EV_GENERACIONES", "10"))
 PARAM$EV$tope         <- as.integer(env_o("EV_TOPE", "0"))      # 0 = las columnas con las que llega el dataset
 PARAM$EV$min_hijos    <- as.numeric(env_o("EV_MIN_HIJOS", "0.25"))  # lugares minimos para hijos, en fraccion del tope
+# EV_ORIGINALES_FIJAS=1 (default): las originales pasan siempre y la genetica
+# agrega hasta EV_FORMULAS formulas. 0: compite toda la poblacion por el tope
+# y las formulas reemplazan columnas (la regla anterior; en WF9570 y en la
+# tanda v3 las originales caian de 1.509 a ~500 y ~220)
+PARAM$EV$originales_fijas <- env_o("EV_ORIGINALES_FIJAS", "1") == "1"
+PARAM$EV$formulas    <- as.integer(env_o("EV_FORMULAS", "500"))     # lugares para formulas (con originales fijas)
 PARAM$EV$presion      <- as.numeric(env_o("EV_PRESION", "10"))  # el mejor puesto es X veces mas probable que el peor
 PARAM$EV$semillas_n   <- as.integer(env_o("EV_SEMILLAS_N", "1"))  # LightGBM por generacion (importancia promedio)
 PARAM$EV$borrar_muertas <- env_o("EV_BORRAR_MUERTAS", "1") == "1"   # 1: las originales muertas salen del dataset
@@ -535,8 +544,11 @@ correr_evolutivo <- function(materializar= TRUE) {
   tope <- if (PARAM$EV$tope > 0) PARAM$EV$tope else length(originales)
   EV$param <- ev_param()
   semillas <- PARAM$semilla_primigenia + seq_len(PARAM$EV$semillas_n) - 1
-  loguear("evolutivo:", length(originales), "originales, tope", tope, ", minimo de hijos",
-          ceiling(PARAM$EV$min_hijos * tope), ", seleccion", PARAM$EV$seleccion,
+  loguear("evolutivo:", length(originales), "originales,",
+          if (PARAM$EV$originales_fijas) paste("originales fijas, lugares para formulas", PARAM$EV$formulas,
+            ", minimo de hijos", ceiling(PARAM$EV$min_hijos * PARAM$EV$formulas))
+          else paste("tope", tope, ", minimo de hijos", ceiling(PARAM$EV$min_hijos * tope)),
+          ", seleccion", PARAM$EV$seleccion,
           ", importancia con el LightGBM de canaritos (", EV$param$num_leaves, "hojas, early stopping",
           EV$param$early_stopping_rounds, ")")
 
@@ -579,16 +591,28 @@ correr_evolutivo <- function(materializar= TRUE) {
     pob_inicio <- nrow(pob)
     peso_padres <- ev_pesos(pob$importancia)
 
-    # --- reproduccion (X * 1): pasa igual toda variable que el modelo uso
-    # (importancia > 0), original o formula. Si no entran todas dejandole a
-    # los hijos el minimo de EV_MIN_HIJOS, pasan las de mas importancia ------
-    max_copias <- tope - ceiling(PARAM$EV$min_hijos * tope)
-    usadas <- which(pob$importancia > 0)
+    # --- reproduccion (X * 1): pasa igual lo que el modelo uso (importancia >
+    # 0). Con EV_ORIGINALES_FIJAS (default) las originales no compiten: pasan
+    # todas, siempre, y la genetica AGREGA formulas en vez de reemplazar
+    # columnas. Las formulas compiten entre ellas por EV_FORMULAS lugares: pasan
+    # las usadas, por importancia, y el resto de los lugares son hijos. Sin
+    # originales fijas compite toda la poblacion por el tope. En los dos casos,
+    # si las usadas no entran todas dejandole a los hijos el minimo de
+    # EV_MIN_HIJOS, pasan las de mas importancia ------------------------------
+    if (PARAM$EV$originales_fijas) {
+      compiten <- which(!pob$original)
+      cupo <- PARAM$EV$formulas
+    } else {
+      compiten <- seq_len(nrow(pob))
+      cupo <- tope
+    }
+    max_copias <- cupo - ceiling(PARAM$EV$min_hijos * cupo)
+    usadas <- compiten[pob$importancia[compiten] > 0]
     n_copias <- min(length(usadas), max_copias)
     uso_minimo <- length(usadas) > max_copias
-    copias <- if (PARAM$EV$seleccion == "azar") sample(nrow(pob), n_copias) else
+    copias <- if (PARAM$EV$seleccion == "azar") compiten[sample(length(compiten), n_copias)] else
       usadas[order(-pob$importancia[usadas])][seq_len(n_copias)]
-    pasa <- seq_len(nrow(pob)) %in% copias
+    pasa <- seq_len(nrow(pob)) %in% copias | (PARAM$EV$originales_fijas & pob$original)
     sigue <- pob[pasa]
     no_pasa <- pob[!pasa]
 
@@ -597,7 +621,7 @@ correr_evolutivo <- function(materializar= TRUE) {
     hijos <- list()
     vistas <- pob$formula
     intentos <- 0
-    n_cruzas <- tope - n_copias
+    n_cruzas <- cupo - n_copias
     while (length(hijos) < n_cruzas && intentos < 5 * n_cruzas) {
       intentos <- intentos + 1
       p <- sample(nrow(pob), 2, prob= peso_padres)
@@ -801,6 +825,7 @@ mandar_mail("arranco",
            ", ", PARAM$EV$generaciones, " generaciones, tope ",
            if (PARAM$EV$tope > 0) PARAM$EV$tope else "columnas iniciales",
            ", minimo de hijos ", PARAM$EV$min_hijos, ", presion ", PARAM$EV$presion,
+           if (PARAM$EV$originales_fijas) paste0(", originales fijas, ", PARAM$EV$formulas, " lugares para formulas") else ", originales compiten",
            ", importancia con el LightGBM de canaritos (entrena ",
            paste(range(PARAM$EV$imp$training), collapse= "-"), " con ", PARAM$EV$imp$undersampling,
            " de los CONTINUA, valida ", paste(PARAM$EV$imp$validation, collapse= ","), ")"), "\n",

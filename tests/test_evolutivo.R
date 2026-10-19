@@ -27,6 +27,7 @@ GRUPO <- "B"
 PARAM <- list(semilla_primigenia= 100213, ganancia= list(acierto= 975000, error= -25000),
   BO= list(ht_fijo= ""), GA= list(modo= "evolutivo"),
   EV= list(seleccion= "importancia", generaciones= 4L, tope= 0L, min_hijos= 0.25, presion= 10,
+           originales_fijas= FALSE, formulas= 0L,
            semillas_n= 1L, borrar_muertas= TRUE, mail_cada_gen= 1,
            imp= list(training= c(202012, 202101, 202102, 202103), validation= 202105L, undersampling= 1,
                      prueba= 202104L)),
@@ -130,4 +131,24 @@ ok(all(gen_b$nombre %in% names(dataset)), "EV_POBLACION_DESDE: las formulas de l
 ok(isTRUE(all.equal(dataset[[gen_b$nombre[1]]], ev_evaluar(gen_b$formula[1], dataset0))), "EV_POBLACION_DESDE: misma formula, mismos valores")
 ok(!any(setdiff(originales, pob_busqueda$nombre) %in% names(dataset)), "EV_POBLACION_DESDE: las originales que no pasaron salen")
 ok(inherits(try(ev_desde("no_existe.txt"), silent= TRUE), "try-error"), "EV_POBLACION_DESDE con un archivo que no existe corta")
+
+# EV_ORIGINALES_FIJAS: las originales pasan siempre y la genetica agrega hasta
+# EV_FORMULAS formulas (10 aca); nunca se borra una original
+unlink(c(ARCH_EV_GEN, ARCH_EV_NAC, ARCH_EV_POB, ARCH_EV_MEJ, CK_EV))
+PARAM$EV$seleccion <- "importancia"; PARAM$EV$generaciones <- 4L
+PARAM$EV$originales_fijas <- TRUE; PARAM$EV$formulas <- 10L
+dataset <- copy(dataset0)
+correr_evolutivo()
+gen_f <- fread(ARCH_EV_GEN); pob_f <- fread(ARCH_EV_POB)
+ok(all(gen_f$originales_vivas == 20), "originales fijas: las 20 originales siguen en todas las generaciones")
+ok(all(gen_f$poblacion[-1] == 30), "originales fijas: la poblacion es 20 originales + 10 formulas")
+ok(all(gen_f$generadas_vivas[-1] <= 10), "originales fijas: las formulas no pasan su cupo")
+ok(all(gen_f$nacidas[-1] >= 3), "originales fijas: siempre nacen al menos 3 (EV_MIN_HIJOS = 0,25 de 10)")
+ok(all(originales %in% names(dataset)), "originales fijas: ninguna original sale del dataset final")
+ok(all(pob_f[original == FALSE, nombre] %in% names(dataset)), "originales fijas: las formulas finales entran al dataset")
+unlink(c(ARCH_EV_GEN, ARCH_EV_NAC, ARCH_EV_POB, ARCH_EV_MEJ, CK_EV))
+PARAM$EV$seleccion <- "azar"; PARAM$EV$generaciones <- 2L
+dataset <- copy(dataset0)
+correr_evolutivo(materializar= FALSE)
+ok(all(fread(ARCH_EV_GEN)$originales_vivas == 20), "originales fijas con seleccion al azar: las originales tambien quedan")
 cat("TODO OK\n")
