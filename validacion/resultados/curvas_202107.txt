@@ -1,0 +1,57 @@
+Mes 202107: 164479 clientes, 1304 BAJA+2 (0.793%)
+Corridas: 70  (9900:20 9901:10 9902:20 9903:10 9904:10)
+
+1. Por brazo (millones): media y desvío entre semillas
+  WF9900 n=20  meseta 583,19 (sd 4,37)  maximo 594,89 (sd 4,60)  maximo-meseta 11,70  envios del maximo: mediana 12984 [10123; 16215]
+  WF9901 n=10  meseta 584,41 (sd 3,04)  maximo 596,53 (sd 3,94)  maximo-meseta 12,12  envios del maximo: mediana 12135 [10503; 14873]
+  WF9902 n=20  meseta 586,04 (sd 4,03)  maximo 595,83 (sd 5,53)  maximo-meseta 9,79  envios del maximo: mediana 12362 [8931; 15797]
+  WF9903 n=10  meseta 582,83 (sd 3,94)  maximo 594,85 (sd 3,52)  maximo-meseta 12,02  envios del maximo: mediana 13667 [10392; 15435]
+  WF9904 n=10  meseta 585,81 (sd 2,72)  maximo 596,90 (sd 3,16)  maximo-meseta 11,09  envios del maximo: mediana 12393 [10551; 14095]
+
+   Diferencias pareadas contra el primer brazo (WF9900), por métrica:
+   WF9901 - WF9900  meseta  n=10  media    1,72  sd   3,03  media/sd  0.57  gana 7 de 10  p Wilcoxon 0.111
+   WF9901 - WF9900  maximo  n=10  media    1,41  sd   3,06  media/sd  0.46  gana 8 de 10  p Wilcoxon 0.105
+   WF9901 - WF9900  10000   n=10  media   -0,50  sd   4,12  media/sd -0.12  gana 4 de 10  p Wilcoxon 1.000
+   WF9902 - WF9900  meseta  n=20  media    2,85  sd   4,29  media/sd  0.66  gana 16 de 20  p Wilcoxon 0.010
+   WF9902 - WF9900  maximo  n=20  media    0,95  sd   5,56  media/sd  0.17  gana 14 de 20  p Wilcoxon 0.430
+   WF9902 - WF9900  10000   n=20  media    1,80  sd   5,72  media/sd  0.31  gana 14 de 20  p Wilcoxon 0.192
+   WF9903 - WF9900  meseta  n=10  media    0,14  sd   4,98  media/sd  0.03  gana 6 de 10  p Wilcoxon 0.865
+   WF9903 - WF9900  maximo  n=10  media   -0,27  sd   6,74  media/sd -0.04  gana 4 de 10  p Wilcoxon 1.000
+   WF9903 - WF9900  10000   n=10  media   -0,20  sd   7,33  media/sd -0.03  gana 6 de 10  p Wilcoxon 0.750
+   WF9904 - WF9900  meseta  n=10  media    3,12  sd   3,40  media/sd  0.92  gana 7 de 10  p Wilcoxon 0.037
+   WF9904 - WF9900  maximo  n=10  media    1,78  sd   5,37  media/sd  0.33  gana 6 de 10  p Wilcoxon 0.375
+   WF9904 - WF9900  10000   n=10  media    1,70  sd   5,68  media/sd  0.30  gana 6 de 10  p Wilcoxon 0.371
+
+2. Bootstrap de clientes de 202107 (500 réplicas, Poisson(1)): IC 95% de UNA corrida
+   WF9900_s100213 meseta observado 586,33  IC [527,88; 647,79]  sd 28,86
+   WF9900_s100213 maximo observado 598,73  IC [541,46; 667,71]  sd 30,48
+   WF9900_s100213 envios del maximo: observado 14051, IC bootstrap [9660; 14853]
+   sd bootstrap promedio entre corridas: meseta 28,97, maximo 30,16
+   sd bootstrap de la DIFERENCIA de meseta entre dos brazos con la misma semilla: mediana 4,10 (50 pares)
+
+3. Public simulado: 500 particiones al azar 30/70 de 202107 (escaladas a la población)
+   Spearman public vs private entre las 70 corridas: mediana 0.12 [p5 -0.06; p95 0.28]
+   La mejor del public es la mejor del private en el 38% de las particiones; puesto mediano en el private: 10 de 70
+   sd del public de una corrida entre particiones: meseta 42,06, maximo 43,72
+   WF9901 - WF9900 por semilla: el public acierta el signo del private en el 47% de los casos; sd de la diferencia en el public 6,90
+   WF9902 - WF9900 por semilla: el public acierta el signo del private en el 61% de los casos; sd de la diferencia en el public 7,49
+   WF9903 - WF9900 por semilla: el public acierta el signo del private en el 47% de los casos; sd de la diferencia en el public 7,97
+   WF9904 - WF9900 por semilla: el public acierta el signo del private en el 57% de los casos; sd de la diferencia en el public 7,31
+   (la corrida completa se cortó acá por un bug ya corregido; lo que sigue se calculó desde public_simulado.csv y curvas_202107.csv)
+   Promedio de semillas, public vs private: acierta el signo / sd de la diferencia en el public (M) / diferencia media en el private (M) / P(dif public > 0)
+   WF9901 - WF9900 (10 semillas): 64%  2,65  1,67  0,73
+   WF9902 - WF9900 (20 semillas): 90%  2,07  2,77  0,90
+   WF9903 - WF9900 (10 semillas): 10%  2,57  0,12  0,56   (sin diferencia real: public y private son complementarios y tiran para lados opuestos)
+   WF9904 - WF9900 (10 semillas): 86%  2,74  3,09  0,86
+
+4. Ganancia promedio entre las 70 corridas por corte fijo (millones) y lo que se pierde contra el máximo de cada corrida
+     8000 envíos: 576,74  (máximo - corte: 18,93)
+     8500 envíos: 580,73  (máximo - corte: 14,95)
+     9000 envíos: 582,56  (máximo - corte: 13,12)
+     9500 envíos: 584,27  (máximo - corte: 11,40)
+    10000 envíos: 585,49  (máximo - corte: 10,19)
+    10500 envíos: 586,47  (máximo - corte: 9,20)
+    11000 envíos: 587,70  (máximo - corte: 7,97)
+    11500 envíos: 588,20  (máximo - corte: 7,47)
+    12000 envíos: 588,36  (máximo - corte: 7,32)
+   Envíos del máximo (cuantiles 0/10/25/50/75/90/100%): 8931 10380 11684 12538 13760 14573 16215

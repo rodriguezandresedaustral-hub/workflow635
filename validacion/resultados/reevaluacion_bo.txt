@@ -1,0 +1,25 @@
+Filas: 300  por vista y semilla:
+Key: <vista>
+    vista 100213 271211
+   <char>  <int>  <int>
+1:    T07     50     50
+2:    V03     50     50
+3:    V05     50     50
+
+Ruido entre semillas (misma configuración, distinta semilla):
+  V05  Spearman meseta semilla1 vs semilla2 0.90   sd media de la meseta 4.54 M   sd media de la AUC 0.00139   rango de la meseta entre configs 187.50 M
+  T07  Spearman meseta semilla1 vs semilla2 0.91   sd media de la meseta 6.55 M   sd media de la AUC 0.00285   rango de la meseta entre configs 271.94 M
+  V03  Spearman meseta semilla1 vs semilla2 0.94   sd media de la meseta 5.20 M   sd media de la AUC 0.00246   rango de la meseta entre configs 181.72 M
+
+50 configuraciones con T07. Meseta 202107: mejor 601.67 M, mediana 561.92 M, peor 329.72 M
+La que eligió la BO (config 1, mejor AUC en 202105): meseta 202107 584.39 M, puesto 5 de 50
+
+Criterio                                   n   Spearman vs meseta T07   elegida: meseta T07  puesto  regret   top5: meseta T07 media
+AUC de la BO original (202105, 1 semilla)  50     0.75                   584.39            5     17.28   582.36
+AUC 202105 (V05)                           50     0.75                   580.00            7     21.67   577.00
+meseta 202105 (V05)                        50     0.74                   571.17           17     30.50   582.36
+maximo 202105 (V05)                        50     0.74                   578.89            8     22.78   575.02
+AUC 202103 (V03)                           50     0.80                   580.00            7     21.67   577.39
+meseta 202103 (V03)                        50     0.82                   580.00            7     21.67   577.24
+meseta promedio 202103+202105              50     0.80                   580.00            7     21.67   577.56
+AUC 202107 (T07, referencia)               50     0.89                   580.00            7     21.67   583.79
