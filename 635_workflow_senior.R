@@ -181,6 +181,11 @@ PARAM$EV$min_hijos    <- as.numeric(env_o("EV_MIN_HIJOS", "0.25"))  # lugares mi
 # tanda v3 las originales caian de 1.509 a ~500 y ~220)
 PARAM$EV$originales_fijas <- env_o("EV_ORIGINALES_FIJAS", "1") == "1"
 PARAM$EV$formulas    <- as.integer(env_o("EV_FORMULAS", "500"))     # lugares para formulas (con originales fijas)
+# EV_HISTORIA=1 (default): cada formula tiene su propia historia (lag1, lag2,
+# delta1, delta2 y tend6, como las columnas del FE historico), en cada
+# generacion y en el dataset final. La importancia de una formula es la suma
+# de sus 6 columnas. 0: la formula sola (como en el PR 8)
+PARAM$EV$historia    <- env_o("EV_HISTORIA", "1") == "1"
 PARAM$EV$presion      <- as.numeric(env_o("EV_PRESION", "10"))  # el mejor puesto es X veces mas probable que el peor
 PARAM$EV$semillas_n   <- as.integer(env_o("EV_SEMILLAS_N", "1"))  # LightGBM por generacion (importancia promedio)
 PARAM$EV$borrar_muertas <- env_o("EV_BORRAR_MUERTAS", "1") == "1"   # 1: las originales muertas salen del dataset
@@ -463,10 +468,79 @@ ev_param <- function() list(
   num_threads = parallel::detectCores()
 )
 
-# arma la matriz de las filas idx con las columnas de V, sin copias intermedias
-ev_matriz <- function(nombres, V, idx) {
+# la historia de una columna (dataset ordenado por numero_de_cliente, foto_mes):
+# lag1, lag2, delta1 y delta2 por cliente como la z635 celda 51, y la
+# tendencia de 6 meses como fhistC (celda 49): pendiente por cuadrados minimos
+# de la fila actual y las 5 anteriores del mismo cliente, salteando NA, con al
+# menos 2 valores. La pendiente no cambia si se corre x, asi que x = -k para la
+# fila de k meses antes y se calcula vectorizado. No usa fhistC: esa funcion se
+# define en la etapa del FE historico y no existe si la corrida retoma desde su
+# checkpoint
+EV_SUFIJOS_HIST <- c("lag1", "lag2", "delta1", "delta2", "tend6")
+ev_historia <- function(v, id) {
+  lagk <- function(k) { l <- shift(v, k); mismo <- id == shift(id, k); l[is.na(mismo) | !mismo] <- NA; l }
+  l1 <- lagk(1); l2 <- lagk(2)
+  n <- length(v)
+  N <- Sx <- Sy <- Sxy <- Sxx <- numeric(n)
+  for (k in 0:5) {
+    y <- switch(as.character(k), "0"= v, "1"= l1, "2"= l2, lagk(k))
+    ok <- !is.na(y)
+    x <- -k
+    N <- N + ok; Sx <- Sx + ok * x; Sxx <- Sxx + ok * x^2
+    Sy[ok] <- Sy[ok] + y[ok]; Sxy[ok] <- Sxy[ok] + x * y[ok]
+  }
+  tend <- rep(NA_real_, n)
+  hay <- N > 1
+  tend[hay] <- (N[hay] * Sxy[hay] - Sx[hay] * Sy[hay]) / (N[hay] * Sxx[hay] - Sx[hay]^2)
+  list(lag1= l1, lag2= l2, delta1= v - l1, delta2= v - l2, tend6= tend)
+}
+
+# las columnas que el LightGBM ve de una poblacion: cada original y cada
+# formula, y con EV_HISTORIA la historia de cada formula
+ev_columnas <- function(pob) {
+  c(pob$nombre, if (PARAM$EV$historia && any(!pob$original))
+    as.vector(outer(pob$nombre[!pob$original], EV_SUFIJOS_HIST, paste, sep= "_")))
+}
+
+# la importancia de cada fila de la poblacion: la de su columna, mas la de su
+# historia si es una formula con EV_HISTORIA
+ev_importancia_unidad <- function(pob, imp) {
+  u <- unname(imp[pob$nombre])
+  if (PARAM$EV$historia && any(!pob$original)) {
+    f <- which(!pob$original)
+    for (k in EV_SUFIJOS_HIST) u[f] <- u[f] + unname(imp[paste0(pob$nombre[f], "_", k)])
+  }
+  u[is.na(u)] <- 0
+  u
+}
+
+# guarda una formula: el vector entero en VF (para hijos y para la historia) y
+# la muestra en V (para el LightGBM), con su historia si corresponde
+ev_guardar_formula <- function(nombre, v, VF, V, s) {
+  assign(nombre, v, envir= VF)
+  assign(nombre, v[s$filas], envir= V)
+  if (PARAM$EV$historia) {
+    h <- ev_historia(v, dataset$numero_de_cliente)
+    for (k in EV_SUFIJOS_HIST) assign(paste0(nombre, "_", k), h[[k]][s$filas], envir= V)
+  }
+}
+ev_borrar_formulas <- function(nombres, VF, V) {
+  if (!length(nombres)) return(invisible())
+  rm(list= intersect(nombres, ls(VF)), envir= VF)
+  todas <- c(nombres, as.vector(outer(nombres, EV_SUFIJOS_HIST, paste, sep= "_")))
+  rm(list= intersect(todas, ls(V)), envir= V)
+}
+# el vector entero de un padre: una formula esta en VF, una original en el dataset
+ev_completo <- function(nombre, VF) if (exists(nombre, envir= VF, inherits= FALSE)) get(nombre, envir= VF) else as.numeric(dataset[[nombre]])
+
+# arma la matriz de las filas idx: las columnas de V, y las que no estan en V
+# (las originales) directo del dataset, sin copias intermedias
+ev_matriz <- function(nombres, V, idx, filas) {
   X <- matrix(0, nrow= length(idx), ncol= length(nombres), dimnames= list(NULL, nombres))
-  for (j in seq_along(nombres)) X[, j] <- V[[nombres[j]]][idx]
+  for (j in seq_along(nombres)) {
+    v <- V[[nombres[j]]]
+    X[, j] <- if (is.null(v)) dataset[[nombres[j]]][filas[idx]] else v[idx]
+  }
   X
 }
 
@@ -477,14 +551,14 @@ ev_matriz <- function(nombres, V, idx) {
 # sus bins y se libera antes de entrenar
 ev_entrenar <- function(nombres, V, s, semillas) {
   tr <- which(!s$es_valid & !s$es_prueba); va <- which(s$es_valid); pr <- which(s$es_prueba)
-  Xtr <- ev_matriz(nombres, V, tr)
+  Xtr <- ev_matriz(nombres, V, tr, s$filas)
   dtr <- lgb.Dataset(Xtr, label= s$label[tr], weight= s$peso[tr], free_raw_data= TRUE,
                      params= list(max_bin= EV$param$max_bin, feature_pre_filter= FALSE))
   lgb.Dataset.construct(dtr)
   rm(Xtr); gc(verbose= FALSE)
-  Xva <- ev_matriz(nombres, V, va)
+  Xva <- ev_matriz(nombres, V, va, s$filas)
   dva <- lgb.Dataset.create.valid(dtr, Xva, label= s$label[va], weight= s$peso[va])
-  Xpr <- ev_matriz(nombres, V, pr)
+  Xpr <- ev_matriz(nombres, V, pr, s$filas)
   res <- lapply(semillas, function(sem) {
     p <- EV$param
     p$seed <- sem
@@ -549,21 +623,24 @@ correr_evolutivo <- function(materializar= TRUE) {
             ", minimo de hijos", ceiling(PARAM$EV$min_hijos * PARAM$EV$formulas))
           else paste("tope", tope, ", minimo de hijos", ceiling(PARAM$EV$min_hijos * tope)),
           ", seleccion", PARAM$EV$seleccion,
+          if (PARAM$EV$historia) ", formulas con historia (lag1, lag2, delta1, delta2, tend6)" else ", formulas sin historia",
           ", importancia con el LightGBM de canaritos (", EV$param$num_leaves, "hojas, early stopping",
           EV$param$early_stopping_rounds, ")")
 
+  # la historia de las formulas necesita el dataset ordenado por cliente y mes
+  setorder(dataset, numero_de_cliente, foto_mes)
   s <- ev_muestra()
-  V <- new.env()
-  for (n in originales) assign(n, as.numeric(dataset[[n]][s$filas]), envir= V)
+  # V: la muestra de cada formula (y su historia); VF: el vector entero de cada
+  # formula. Las originales no se copian: se leen del dataset
+  V <- new.env(); VF <- new.env()
 
   if (file.exists(CK_EV)) {
     e <- readRDS(CK_EV)
     EV$pob <- e$pob; EV$nacidas_acum <- e$nacidas_acum
     g0 <- e$g
     assign(".Random.seed", e$rng, envir= globalenv())
-    for (i in which(!EV$pob$original)) assign(EV$pob$nombre[i], ev_evaluar(EV$pob$formula[i], V), envir= V)
-    # las originales que ya no estan en la poblacion no se usan mas
-    rm(list= setdiff(originales, EV$pob$nombre), envir= V)
+    for (i in which(!EV$pob$original))
+      ev_guardar_formula(EV$pob$nombre[i], ev_evaluar(EV$pob$formula[i], dataset), VF, V, s)
     loguear("evolutivo: retomo despues de la generacion", g0)
   } else {
     set.seed(PARAM$semilla_primigenia, kind = "L'Ecuyer-CMRG")
@@ -576,6 +653,7 @@ correr_evolutivo <- function(materializar= TRUE) {
     g0 <- 0L
     ev_log_generacion(data.table(generacion= 0L, poblacion_inicio= length(originales),
       usadas= sum(r$imp[originales] > 0), copias= 0L, uso_minimo_hijos= FALSE,
+      columnas= length(originales),
       nacidas= 0L, no_pasan= 0L, poblacion= length(originales),
       originales_vivas= length(originales), generadas_vivas= 0L, prof_max= 0L, prof_media= 0,
       padres_de_generaciones_distintas= NA_real_, nacidas_acumuladas= 0L,
@@ -632,10 +710,12 @@ correr_evolutivo <- function(materializar= TRUE) {
       formula <- paste0("(", fa, " ", op, " ", fb, ")")
       if (formula %in% vistas) next
       vistas <- c(vistas, formula)
-      v <- EV_OPS[[op]](get(pob$nombre[p[1]], envir= V), get(pob$nombre[p[2]], envir= V))
+      # el hijo se calcula sobre el dataset entero: su historia necesita los
+      # meses que no estan en la muestra (el lag1 de 202105 es 202104)
+      v <- EV_OPS[[op]](ev_completo(pob$nombre[p[1]], VF), ev_completo(pob$nombre[p[2]], VF))
       if (ev_constante(v)) next
       nombre <- sprintf("ev%02d_%04d", g, length(hijos) + 1L)
-      assign(nombre, v, envir= V)
+      ev_guardar_formula(nombre, v, VF, V, s)
       hijos[[length(hijos) + 1L]] <- data.table(nombre= nombre, formula= formula, nacio= as.integer(g),
         prof= max(pob$prof[p]) + 1L, original= FALSE, importancia= NA_real_,
         padre1= pob$nombre[p[1]], padre2= pob$nombre[p[2]],
@@ -653,12 +733,14 @@ correr_evolutivo <- function(materializar= TRUE) {
     EV$pob <- rbind(sigue, if (nrow(hijos)) hijos[, names(pob), with= FALSE])
     # lo que no pasa ya no se usa, ni como padre: sale de V antes de entrenar,
     # asi en RAM hay una sola poblacion. Al retomar, V se rearma desde el dataset
-    if (nrow(no_pasa)) rm(list= no_pasa$nombre, envir= V)
-    r <- ev_entrenar(EV$pob$nombre, V, s, semillas)
-    EV$pob[, importancia := unname(r$imp[nombre])]
+    ev_borrar_formulas(no_pasa[original == FALSE, nombre], VF, V)
+    cols <- ev_columnas(EV$pob)
+    r <- ev_entrenar(cols, V, s, semillas)
+    EV$pob[, importancia := ev_importancia_unidad(EV$pob, r$imp)]
 
     ev_log_generacion(data.table(generacion= g, poblacion_inicio= pob_inicio,
       usadas= sum(EV$pob$importancia > 0), copias= nrow(sigue), uso_minimo_hijos= uso_minimo,
+      columnas= length(cols),
       nacidas= nrow(hijos), no_pasan= nrow(no_pasa), poblacion= nrow(EV$pob),
       originales_vivas= sum(EV$pob$original), generadas_vivas= sum(!EV$pob$original),
       prof_max= max(EV$pob$prof), prof_media= round(mean(EV$pob$prof), 2),
@@ -698,12 +780,19 @@ ev_materializar <- function(pob, originales) {
   ultima <- vapply(muertas_ori, function(n) max(c(0L, which(vapply(usa, function(u) n %in% u, logical(1))))), integer(1))
   borrar <- function(cols) if (PARAM$EV$borrar_muertas && length(cols)) dataset[, (cols) := NULL]
   borrar(muertas_ori[ultima == 0L])
+  setorder(dataset, numero_de_cliente, foto_mes)
   for (j in seq_along(generadas)) {
     i <- generadas[j]
-    dataset[, (pob$nombre[i]) := ev_evaluar(pob$formula[i], dataset)]
+    v <- ev_evaluar(pob$formula[i], dataset)
+    set(dataset, j= pob$nombre[i], value= v)
+    if (PARAM$EV$historia) {
+      h <- ev_historia(v, dataset$numero_de_cliente)
+      for (k in EV_SUFIJOS_HIST) set(dataset, j= paste0(pob$nombre[i], "_", k), value= h[[k]])
+    }
     borrar(muertas_ori[ultima == j])
   }
-  loguear("evolutivo: el dataset queda con", length(generadas), "generadas y",
+  loguear("evolutivo: el dataset queda con", length(generadas), "generadas",
+          if (PARAM$EV$historia) "(cada una con lag1, lag2, delta1, delta2 y tend6)" else "", "y",
           sum(pob$original), "originales de", length(originales),
           if (PARAM$EV$borrar_muertas) "(las originales muertas se borran)" else "(las originales muertas quedan)")
 }
