@@ -27,13 +27,13 @@ GRUPO <- "B"
 PARAM <- list(semilla_primigenia= 100213, ganancia= list(acierto= 975000, error= -25000),
   BO= list(ht_fijo= ""), GA= list(modo= "evolutivo"),
   EV= list(seleccion= "importancia", generaciones= 4L, tope= 0L, min_hijos= 0.25, presion= 10,
-           originales_fijas= FALSE, formulas= 0L, historia= FALSE,
+           originales_fijas= FALSE, formulas= 0L, historia= FALSE, piso_canaritos= FALSE,
            semillas_n= 1L, borrar_muertas= TRUE, mail_cada_gen= 1,
            imp= list(training= c(202012, 202101, 202102, 202103), validation= 202105L, undersampling= 1,
                      prueba= 202104L)),
   CN= list(train= list(clase01_valor1= c("BAJA+2", "BAJA+1"), positivos= c("BAJA+2"),
     training= c(202101, 202102, 202103), validation= c(202105), undersampling= 0.1,
-    gan1= 0.975, gan0= -0.025)))
+    gan1= 0.975, gan0= -0.025), ratio= 0.2, desvios= 2))
 source(bloque_cn)
 source(bloque)
 
@@ -187,4 +187,50 @@ ok(all(originales %in% names(dataset)), "historia: con originales fijas no sale 
 dataset <- copy(dataset0)
 correr_evolutivo(materializar= FALSE)
 ok(nrow(fread(ARCH_EV_GEN)) == nrow(gen_h), "historia: retomar desde el checkpoint no repite generaciones")
+
+# retomar despues de un corte entre los logs y el checkpoint: se sacan las filas
+# de la generacion que se va a repetir
+fwrite(data.table(generacion= 99L), ARCH_EV_GEN, sep= "\t", append= TRUE)
+fwrite(data.table(generacion= 99L, nombre= "x"), ARCH_EV_NAC, sep= "\t", append= TRUE)
+dataset <- copy(dataset0)
+correr_evolutivo(materializar= FALSE)
+ok(max(fread(ARCH_EV_GEN)$generacion) == 3 && max(fread(ARCH_EV_NAC)$generacion) == 3,
+   "retomar saca las filas de una generacion que quedo a medias")
+
+# la poblacion guarda con que historia se hizo, y EV_POBLACION_DESDE la respeta
+ok("historia" %in% names(pob_h) && isTRUE(as.logical(pob_h$historia[1])), "la poblacion guarda EV_HISTORIA")
+PARAM$EV$historia <- FALSE
+dataset <- copy(dataset0)
+ev_desde(ARCH_EV_POB)
+ok(PARAM$EV$historia && all(cols_h %in% names(dataset)), "EV_POBLACION_DESDE usa la historia de la busqueda aunque la corrida diga otra")
+
+# padres: los empatados en 0 pesan 1 (el minimo), el primero EV_PRESION
+w <- ev_pesos(c(5, 4, 3, 0, 0, 0))
+ok(w[1] == 10 && all(w[4:6] == 1) && all(diff(w[1:4]) < 0), "padres: importancia 0 pesa 1, el primero 10")
+
+# EV_PISO_CANARITOS: sirve lo que le gana a las canaritos; sin hijos triviales.
+# Se agregan v1_lag1 y v2_lag1 (por cliente) para que haya pares de la misma variable
+unlink(c(ARCH_EV_GEN, ARCH_EV_NAC, ARCH_EV_POB, ARCH_EV_MEJ, CK_EV))
+dataset <- copy(dataset0)
+dataset[, v1_lag1 := shift(v1), by= numero_de_cliente]
+dataset[, v2_lag1 := shift(v2), by= numero_de_cliente]
+dataset_l <- copy(dataset)
+PARAM$EV$piso_canaritos <- TRUE; PARAM$EV$historia <- TRUE
+PARAM$EV$originales_fijas <- TRUE; PARAM$EV$formulas <- 30L; PARAM$EV$generaciones <- 3L
+correr_evolutivo(materializar= FALSE)
+gen_c <- fread(ARCH_EV_GEN); nac_c <- fread(ARCH_EV_NAC); pob_c <- fread(ARCH_EV_POB)
+ok(all(gen_c$canaritos > 0) && all(is.finite(gen_c$umbral_canaritos)), "piso: el LightGBM de la importancia lleva canaritos y calcula el umbral")
+ok(gen_c$usadas[1] < 22, "piso: no todas las originales le ganan a las canaritos (hay 16 de ruido puro)")
+ok(all(pob_c[original == FALSE & util == TRUE, importancia] > 0), "piso: lo que sirve tiene importancia")
+ok(sum(pob_c[original == FALSE, util], na.rm= TRUE) == nrow(fread(ARCH_EV_MEJ)), "piso: evolutivo_mejores.txt son las formulas que sirven")
+hijos_c <- nac_c[padre2 != "uno"]
+base_de <- function(x) sub("_(lag1|lag2|delta1|delta2|tend6)$", "", x)
+triviales <- hijos_c[grepl(" [+-] ", formula) & !grepl("^ev", padre1) & !grepl("^ev", padre2) &
+                     base_de(padre1) == base_de(padre2) & !grepl("[*/]", formula)]
+ok(nrow(triviales) == 0, "sin hijos triviales: no nace x + x_lag1 ni x - x_lag1")
+resta <- hijos_c[grepl("^\\(.* - .*\\)$", formula) & !grepl("[(].*[(]", formula), formula]
+partes <- regmatches(resta, regexec("^\\((.*) - (.*)\\)$", resta))
+invertidas <- vapply(partes, function(x) paste0("(", x[3], " - ", x[2], ")"), "")
+ok(!any(invertidas %in% resta), "sin hijos triviales: si nacio a - b no nace b - a")
+ok(all(gen_c$originales_vivas == 22), "piso + originales fijas: las 22 originales siguen")
 cat("TODO OK\n")

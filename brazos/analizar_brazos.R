@@ -18,15 +18,22 @@ args <- commandArgs(trailingOnly= TRUE)
 EXP <- if (length(args)) args[1] else "/home/ds/buckets/b1/exp"
 SALIDA <- file.path(EXP, "brazos_v3")
 dir.create(SALIDA, showWarnings= FALSE)
-BRAZOS <- c(E0= 9920L, E5= 9925L, E6= 9926L, E7= 9927L, E8= 9928L, E9= 9929L)
-# comparaciones fijadas antes de correr, cada una contesta una pregunta
+BRAZOS <- c(E0= 9920L, E5= 9925L, E6= 9926L, E7= 9927L, E8= 9928L, E9= 9929L,
+            E10= 9930L, E11= 9931L, E12= 9932L)
+# comparaciones fijadas antes de correr, cada una contesta una pregunta. Holm
+# va por tanda: v3 (el codigo del PR 8, ya medida) y v4 (originales fijas,
+# historia de las formulas y piso de canaritos)
 COMPARACIONES <- list(
-  c("E6", "E5", "lo que aporta el evolutivo (los dos sin canaritos)"),
-  c("E6", "E0", "evolutivo contra la base de la catedra"),
-  c("E6", "E7", "si la importancia sirve para elegir padres y sobrevivientes"),
-  c("E6", "E8", "si el operador clon sirve"),
-  c("E5", "E0", "lo que cambia por no correr canaritos"),
-  c("E9", "E0", "pesos temporales 0.95^k en el final train"))
+  c("E6", "E5", "lo que aporta el evolutivo (los dos sin canaritos)", "v3"),
+  c("E6", "E0", "evolutivo contra la base de la catedra", "v3"),
+  c("E6", "E7", "si la importancia sirve para elegir padres y sobrevivientes", "v3"),
+  c("E6", "E8", "si el operador clon sirve", "v3"),
+  c("E5", "E0", "lo que cambia por no correr canaritos", "v3"),
+  c("E9", "E0", "pesos temporales 0.95^k en el final train", "v3"),
+  c("E11", "E5", "lo que aporta el evolutivo v4 (los dos sin canaritos)", "v4"),
+  c("E11", "E12", "si la importancia sirve (contra copias y padres al azar)", "v4"),
+  c("E11", "E10", "lo que aportan la historia de las formulas y el piso de canaritos", "v4"),
+  c("E10", "E5", "originales fijas sin historia contra la base", "v4"))
 
 millones <- function(x) formatC(x / 1e6, format= "f", digits= 2, decimal.mark= ",", big.mark= ".")
 p3 <- function(x) formatC(x, format= "f", digits= 3, decimal.mark= ",")
@@ -84,8 +91,9 @@ comparar <- function(a, b, ancho) {
 }
 for (m in c("meseta", "maximo")) {
   ancho <- tabla(m)
-  tb <- rbindlist(lapply(COMPARACIONES, function(k) cbind(comparar(k[1], k[2], ancho), pregunta= k[3])), fill= TRUE)
-  if ("p_wilcoxon" %in% names(tb)) tb[!is.na(p_wilcoxon), p_holm := p.adjust(p_wilcoxon, method= "holm")]
+  tb <- rbindlist(lapply(COMPARACIONES, function(k) cbind(comparar(k[1], k[2], ancho), pregunta= k[3], tanda= k[4])), fill= TRUE)
+  # Holm por tanda: v3 y v4 son preguntas fijadas en momentos distintos
+  if ("p_wilcoxon" %in% names(tb)) tb[!is.na(p_wilcoxon), p_holm := p.adjust(p_wilcoxon, method= "holm"), by= tanda]
   cat(sprintf("Wilcoxon apareado sobre %s (millones; Holm sobre las comparaciones con pares):\n",
               if (m == "meseta") "la MESETA (principal)" else "el maximo (secundaria)"))
   for (i in seq_len(nrow(tb))) with(tb[i], {
@@ -98,7 +106,7 @@ for (m in c("meseta", "maximo")) {
 }
 
 # --- el evolutivo por dentro ----------------------------------------------------
-ev <- rbindlist(lapply(runs[brazo %in% c("E6", "E7", "E8")]$carpeta, function(d) {
+ev <- rbindlist(lapply(runs[brazo %in% c("E6", "E7", "E8", "E10", "E11", "E12")]$carpeta, function(d) {
   f <- file.path(d, "evolutivo_generaciones.txt")
   if (!file.exists(f)) return(NULL)
   g <- fread(f, sep= "\t")

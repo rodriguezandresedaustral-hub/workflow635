@@ -66,9 +66,12 @@ Cada generación (`GA_MODO=evolutivo`):
    importancia (gain) de cada columna. El evolutivo no tiene un LightGBM
    propio. La ganancia en el mes de validación queda en el registro.
 2. **Reproducción (`X * 1`):** pasa igual a la generación siguiente **toda
-   variable que el modelo usó** (importancia > 0), sea original o fórmula. Lo
-   que fue bueno sigue sin cambiar y lo que el modelo no usó no pasa: la
-   importancia decide qué queda, sin un corte nuestro. El único resguardo es
+   variable que sirve**: con `EV_PISO_CANARITOS` (default), la que le gana a
+   columnas al azar en el LightGBM de la importancia, con la regla de la
+   cátedra (celda 66); sin piso, la que tiene importancia > 0. Con
+   `EV_ORIGINALES_FIJAS` (default) las originales pasan siempre y solo
+   compiten las fórmulas, por `EV_FORMULAS` lugares. Lo que fue bueno sigue
+   sin cambiar y lo que no sirve no pasa: la importancia decide qué queda. El único resguardo es
    `EV_MIN_HIJOS` (25 % del tope): si las usadas no entran todas dejándole
    ese mínimo de lugares a los hijos, pasan las de más importancia. El
    registro marca las generaciones en que actuó.
@@ -106,7 +109,7 @@ evolucionar.
 
 | Archivo | Qué |
 |---|---|
-| `evolutivo_generaciones.txt` | una fila por generación: población, **usadas** (importancia > 0), copias `X * 1`, si actuó el mínimo de hijos, nacidas, las que no pasan, **originales vivas**, generadas vivas, profundidad máxima y media, fracción de hijos con padres de generaciones distintas, **fórmulas nacidas acumuladas**, % de la importancia que tienen las generadas, ganancia en la validation de canaritos (meseta y máximo) y segundos |
+| `evolutivo_generaciones.txt` | una fila por generación: población, **sirven** (columna `usadas`: le ganan a las canaritos, o importancia > 0 sin piso), canaritos y su umbral, copias `X * 1` de fórmulas, si actuó el mínimo de hijos, nacidas, las que no pasan, **originales vivas**, generadas vivas, profundidad máxima y media, fracción de hijos con padres de generaciones distintas, **fórmulas nacidas acumuladas**, % de la importancia que tienen las generadas, ganancia en la validation de canaritos (meseta y máximo) y segundos |
 | `evolutivo_nacimientos.txt` | cada hijo y cada clon: fórmula, padres y generación de cada padre |
 | `evolutivo_poblacion.txt` | la población final con su importancia |
 | `checkpoints/evolutivo.rds` | el estado al final de cada generación: si la VM se corta, retoma desde ahí |
@@ -125,6 +128,7 @@ cuántas generadas usa el modelo final y en qué puestos.
 | `EV_UNDERSAMPLING` | 1 | fracción de los CONTINUA en el LightGBM de la importancia (1 = todos) |
 | `EV_ORIGINALES_FIJAS` | 1 | las originales pasan siempre y la genética agrega hasta `EV_FORMULAS` fórmulas; 0: compite toda la población por el tope y las fórmulas reemplazan columnas |
 | `EV_FORMULAS` | 500 | lugares para fórmulas, con originales fijas |
+| `EV_PISO_CANARITOS` | 1 | sirve (y pasa `X * 1`) solo lo que le gana a columnas al azar en el LightGBM de la importancia, con la regla de la cátedra (celda 66: puesto < mediana de las canaritos + `CN$desvios` desvíos, `CN$ratio` × columnas de canaritos). 0: sirve con importancia > 0 |
 | `EV_HISTORIA` | 1 | cada fórmula tiene su propia historia (`_lag1`, `_lag2`, `_delta1`, `_delta2`, `_tend6`, como el FE histórico) en cada generación y en el dataset final; su importancia es la suma de las 6 columnas. 0: la fórmula sola |
 | `EV_SOLO` | 0 | 1: corrida de búsqueda. FE + evolutivo, graba la población y las mejores fórmulas y termina (sin BO, modelo final ni Kaggle) |
 | `EV_CONTROL` | 0 | 1 (con `EV_SOLO`): en la misma corrida corre después el evolutivo con selección al azar, para comparar |

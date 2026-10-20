@@ -120,7 +120,7 @@ PARAM$BO$ht_fijo <- Sys.getenv("HT_FIJO", "")
 if (nzchar(PARAM$BO$ht_fijo) && !file.exists(PARAM$BO$ht_fijo)) stop("No existe HT_FIJO: ", PARAM$BO$ht_fijo)
 
 PARAM$mail$desde    <- Sys.getenv("MAIL_FROM")
-PARAM$mail$cada_iter <- as.integer(Sys.getenv("MAIL_CADA_ITER", "5"))
+PARAM$mail$cada_iter <- as.integer(env_o("MAIL_CADA_ITER", "5"))
 
 # ganancia del problema, para el grupo B (testing contra 202107)
 PARAM$ganancia$acierto <- 975000    # BAJA+2 enviado
@@ -186,6 +186,12 @@ PARAM$EV$formulas    <- as.integer(env_o("EV_FORMULAS", "500"))     # lugares pa
 # generacion y en el dataset final. La importancia de una formula es la suma
 # de sus 6 columnas. 0: la formula sola (como en el PR 8)
 PARAM$EV$historia    <- env_o("EV_HISTORIA", "1") == "1"
+# EV_PISO_CANARITOS=1 (default): una columna "sirve" (y pasa X * 1) solo si le
+# gana a columnas al azar en el LightGBM de la importancia, con la regla de la
+# catedra (z635 celda 66: puesto < mediana del puesto de las canaritos +
+# PARAM$CN$desvios desvios, con PARAM$CN$ratio x columnas de canaritos). Sin
+# piso alcanzaba ganar un solo corte (importancia > 0) para pasar
+PARAM$EV$piso_canaritos <- env_o("EV_PISO_CANARITOS", "1") == "1"
 PARAM$EV$presion      <- as.numeric(env_o("EV_PRESION", "10"))  # el mejor puesto es X veces mas probable que el peor
 PARAM$EV$semillas_n   <- as.integer(env_o("EV_SEMILLAS_N", "1"))  # LightGBM por generacion (importancia promedio)
 PARAM$EV$borrar_muertas <- env_o("EV_BORRAR_MUERTAS", "1") == "1"   # 1: las originales muertas salen del dataset
@@ -534,31 +540,48 @@ ev_borrar_formulas <- function(nombres, VF, V) {
 ev_completo <- function(nombre, VF) if (exists(nombre, envir= VF, inherits= FALSE)) get(nombre, envir= VF) else as.numeric(dataset[[nombre]])
 
 # arma la matriz de las filas idx: las columnas de V, y las que no estan en V
-# (las originales) directo del dataset, sin copias intermedias
-ev_matriz <- function(nombres, V, idx, filas) {
-  X <- matrix(0, nrow= length(idx), ncol= length(nombres), dimnames= list(NULL, nombres))
+# (las originales) directo del dataset, sin copias intermedias. Con n_can > 0
+# agrega al final n_can canaritos (runif) con su propia semilla, sin tocar el
+# RNG del evolutivo
+ev_matriz <- function(nombres, V, idx, filas, n_can= 0L, semilla= 1L) {
+  canaritos <- if (n_can > 0) paste0("canarito", seq_len(n_can)) else character(0)
+  X <- matrix(0, nrow= length(idx), ncol= length(nombres) + n_can, dimnames= list(NULL, c(nombres, canaritos)))
   for (j in seq_along(nombres)) {
     v <- V[[nombres[j]]]
     X[, j] <- if (is.null(v)) dataset[[nombres[j]]][filas[idx]] else v[idx]
+  }
+  if (n_can > 0) {
+    rng <- get0(".Random.seed", envir= globalenv())
+    set.seed(semilla, kind = "L'Ecuyer-CMRG")
+    for (j in seq_len(n_can)) X[, length(nombres) + j] <- runif(length(idx))
+    if (!is.null(rng)) assign(".Random.seed", rng, envir= globalenv())
   }
   X
 }
 
 # entrena el LightGBM de canaritos con las columnas de V (env nombre -> vector)
-# y devuelve la importancia (Gain; 0 si no se uso) y la ganancia en la
-# validation: meseta (promedio de las 500 mejores ganancias acumuladas) y
-# maximo de la curva. RAM: la matriz de training se arma, LightGBM la pasa a
-# sus bins y se libera antes de entrenar
+# y devuelve:
+#   imp     la importancia (Gain; 0 si no se uso) de cada columna
+#   util    si la columna "sirve". Con EV_PISO_CANARITOS (default) es la regla
+#           de la catedra (z635 celda 66): se agregan PARAM$CN$ratio x columnas
+#           de canaritos al azar y sirve la que queda arriba de la mediana del
+#           puesto de las canaritos + PARAM$CN$desvios desvios. Sin piso, sirve
+#           si su importancia es > 0
+#   meseta / maximo (validation) y meseta_prueba / maximo_prueba (mes de prueba)
+# RAM: la matriz de training se arma, LightGBM la pasa a sus bins y se libera
+# antes de entrenar
 ev_entrenar <- function(nombres, V, s, semillas) {
   tr <- which(!s$es_valid & !s$es_prueba); va <- which(s$es_valid); pr <- which(s$es_prueba)
-  Xtr <- ev_matriz(nombres, V, tr, s$filas)
+  n_can <- if (PARAM$EV$piso_canaritos) as.integer(ceiling(PARAM$CN$ratio * length(nombres))) else 0L
+  canaritos <- if (n_can > 0) paste0("canarito", seq_len(n_can)) else character(0)
+  Xtr <- ev_matriz(nombres, V, tr, s$filas, n_can, PARAM$semilla_primigenia + 1001L)
   dtr <- lgb.Dataset(Xtr, label= s$label[tr], weight= s$peso[tr], free_raw_data= TRUE,
                      params= list(max_bin= EV$param$max_bin, feature_pre_filter= FALSE))
   lgb.Dataset.construct(dtr)
   rm(Xtr); gc(verbose= FALSE)
-  Xva <- ev_matriz(nombres, V, va, s$filas)
+  Xva <- ev_matriz(nombres, V, va, s$filas, n_can, PARAM$semilla_primigenia + 1002L)
   dva <- lgb.Dataset.create.valid(dtr, Xva, label= s$label[va], weight= s$peso[va])
-  Xpr <- ev_matriz(nombres, V, pr, s$filas)
+  Xpr <- ev_matriz(nombres, V, pr, s$filas, n_can, PARAM$semilla_primigenia + 1003L)
   res <- lapply(semillas, function(sem) {
     p <- EV$param
     p$seed <- sem
@@ -568,28 +591,59 @@ ev_entrenar <- function(nombres, V, s, semillas) {
     # el mes de prueba: solo se mira, no decide nada
     gan_pr <- cumsum(s$gan_prueba[order(-predict(m, Xpr))])
     im <- as.data.table(lgb.importance(m))
+    im[, pos := .I]
     imp <- setNames(rep(0, length(nombres)), nombres)
-    imp[im$Feature] <- im$Gain
-    list(imp= imp, meseta= mean(sort(gan_acum, decreasing= TRUE)[1:min(500, length(gan_acum))]),
+    im_n <- im[Feature %in% nombres]
+    imp[im_n$Feature] <- im_n$Gain
+    util <- setNames(rep(FALSE, length(nombres)), nombres)
+    if (n_can > 0) {
+      pc <- im[Feature %in% canaritos, pos]
+      # si ninguna canarito tuvo importancia, sirve todo lo que tuvo alguna
+      umbral <- if (length(pc) >= 2) median(pc) + PARAM$CN$desvios * sd(pc) else if (length(pc) == 1) pc else nrow(im) + 1
+      util[im_n[pos < umbral, Feature]] <- TRUE
+    } else {
+      umbral <- NA_real_
+      util[im_n$Feature] <- im_n$Gain > 0
+    }
+    list(imp= imp, util= util, umbral= umbral,
+         meseta= mean(sort(gan_acum, decreasing= TRUE)[1:min(500, length(gan_acum))]),
          maximo= max(gan_acum),
          meseta_prueba= mean(sort(gan_pr, decreasing= TRUE)[1:min(500, length(gan_pr))]),
          maximo_prueba= max(gan_pr))
   })
   rm(dtr, dva, Xva, Xpr); gc(verbose= FALSE)
   list(imp= Reduce(`+`, lapply(res, `[[`, "imp")) / length(res),
+       # con varias semillas, sirve si sirve en la mitad o mas
+       util= (Reduce(`+`, lapply(res, `[[`, "util")) / length(res)) >= 0.5,
+       canaritos= n_can, umbral= mean(sapply(res, `[[`, "umbral")),
        meseta= mean(sapply(res, `[[`, "meseta")),
        maximo= mean(sapply(res, `[[`, "maximo")),
        meseta_prueba= mean(sapply(res, `[[`, "meseta_prueba")),
        maximo_prueba= mean(sapply(res, `[[`, "maximo_prueba")))
 }
 
-# probabilidad de reproducirse / sobrevivir: ranking lineal por importancia.
-# El primero pesa EV_PRESION, el ultimo 1 (los empatados en 0 comparten el
-# peso mas bajo): nadie tiene probabilidad 0 y no hay corte duro
+# si cada fila de la poblacion sirve: su columna, o con EV_HISTORIA cualquiera
+# de las 6 columnas de una formula
+ev_util_unidad <- function(pob, util) {
+  u <- unname(util[pob$nombre])
+  if (PARAM$EV$historia && any(!pob$original)) {
+    f <- which(!pob$original)
+    for (k in EV_SUFIJOS_HIST) u[f] <- u[f] | unname(util[paste0(pob$nombre[f], "_", k)])
+  }
+  u[is.na(u)] <- FALSE
+  u
+}
+
+# la variable original de una columna del FE historico (x_lag1 -> x)
+ev_base <- function(n) sub("_(lag1|lag2|delta1|delta2|tend6)$", "", n)
+
+# probabilidad de ser padre: ranking lineal por importancia. El primero pesa
+# EV_PRESION y el ultimo 1; los empatados toman el peso del puesto mas bajo de
+# su bloque, asi las de importancia 0 pesan 1. Nadie tiene probabilidad 0
 ev_pesos <- function(imp) {
   n <- length(imp)
   if (PARAM$EV$seleccion == "azar" || n < 2) return(rep(1, n))
-  r <- rank(-imp, ties.method= "average")
+  r <- rank(-imp, ties.method= "max")
   1 + (PARAM$EV$presion - 1) * (n - r) / (n - 1)
 }
 
@@ -606,7 +660,7 @@ ev_grabar_estado <- function(g) {
 
 ev_log_generacion <- function(fila) {
   fwrite(fila, ARCH_EV_GEN, sep= "\t", append= file.exists(ARCH_EV_GEN))
-  loguear(sprintf("evolutivo gen %d: poblacion %d (%d originales, %d generadas), %d usadas, %d pasan (X * 1)%s, nacen %d, no pasan %d, prof max %d, meseta %s, max %s, prueba meseta %s",
+  loguear(sprintf("evolutivo gen %d: poblacion %d (%d originales, %d generadas), %d sirven, %d pasan (X * 1)%s, nacen %d, no pasan %d, prof max %d, meseta %s, max %s, prueba meseta %s",
     fila$generacion, fila$poblacion, fila$originales_vivas, fila$generadas_vivas, fila$usadas, fila$copias,
     if (isTRUE(fila$uso_minimo_hijos)) " (minimo de hijos)" else "", fila$nacidas, fila$no_pasan,
     fila$prof_max, miles(fila$ganancia_meseta), miles(fila$ganancia_max), miles(fila$ganancia_meseta_prueba)))
@@ -642,17 +696,26 @@ correr_evolutivo <- function(materializar= TRUE) {
     for (i in which(!EV$pob$original))
       ev_guardar_formula(EV$pob$nombre[i], ev_evaluar(EV$pob$formula[i], dataset), VF, V, s)
     loguear("evolutivo: retomo despues de la generacion", g0)
+    if (!"util" %in% names(EV$pob)) EV$pob[, util := importancia > 0]
+    # si la VM se corto despues de escribir los logs de una generacion y antes
+    # de su checkpoint, esa generacion se repite: se sacan sus filas
+    for (a in c(ARCH_EV_GEN, ARCH_EV_NAC)) if (file.exists(a)) {
+      d <- fread(a, sep= "\t")
+      if (any(d$generacion > g0)) fwrite(d[generacion <= g0], a, sep= "\t")
+    }
   } else {
     set.seed(PARAM$semilla_primigenia, kind = "L'Ecuyer-CMRG")
     t0 <- Sys.time()
     # generacion 0: solo las originales. Es tambien la referencia de ganancia
     r <- ev_entrenar(originales, V, s, semillas)
     EV$pob <- data.table(nombre= originales, formula= ev_nombre_en_formula(originales),
-                         nacio= 0L, prof= 0L, original= TRUE, importancia= unname(r$imp[originales]))
+                         nacio= 0L, prof= 0L, original= TRUE, importancia= unname(r$imp[originales]),
+                         util= unname(r$util[originales]))
     EV$nacidas_acum <- 0L
     g0 <- 0L
     ev_log_generacion(data.table(generacion= 0L, poblacion_inicio= length(originales),
-      usadas= sum(r$imp[originales] > 0), copias= 0L, uso_minimo_hijos= FALSE,
+      usadas= sum(r$util[originales]), copias= 0L, uso_minimo_hijos= FALSE,
+      canaritos= r$canaritos, umbral_canaritos= round(r$umbral, 1),
       columnas= length(originales),
       nacidas= 0L, no_pasan= 0L, poblacion= length(originales),
       originales_vivas= length(originales), generadas_vivas= 0L, prof_max= 0L, prof_media= 0,
@@ -669,8 +732,8 @@ correr_evolutivo <- function(materializar= TRUE) {
     pob_inicio <- nrow(pob)
     peso_padres <- ev_pesos(pob$importancia)
 
-    # --- reproduccion (X * 1): pasa igual lo que el modelo uso (importancia >
-    # 0). Con EV_ORIGINALES_FIJAS (default) las originales no compiten: pasan
+    # --- reproduccion (X * 1): pasa igual lo que sirve (le gana a las
+    # canaritos, ver ev_entrenar; sin piso, importancia > 0). Con EV_ORIGINALES_FIJAS (default) las originales no compiten: pasan
     # todas, siempre, y la genetica AGREGA formulas en vez de reemplazar
     # columnas. Las formulas compiten entre ellas por EV_FORMULAS lugares: pasan
     # las usadas, por importancia, y el resto de los lugares son hijos. Sin
@@ -685,7 +748,7 @@ correr_evolutivo <- function(materializar= TRUE) {
       cupo <- tope
     }
     max_copias <- cupo - ceiling(PARAM$EV$min_hijos * cupo)
-    usadas <- compiten[pob$importancia[compiten] > 0]
+    usadas <- compiten[pob$util[compiten]]
     n_copias <- min(length(usadas), max_copias)
     uso_minimo <- length(usadas) > max_copias
     copias <- if (PARAM$EV$seleccion == "azar") compiten[sample(length(compiten), n_copias)] else
@@ -709,6 +772,12 @@ correr_evolutivo <- function(materializar= TRUE) {
       if (op %in% c("+", "*") && fb < fa) { p <- rev(p); tmp <- fa; fa <- fb; fb <- tmp }
       formula <- paste0("(", fa, " ", op, " ", fb, ")")
       if (formula %in% vistas) next
+      # hijos que no agregan nada: la suma o resta de dos versiones de la misma
+      # variable original ya existe (x - x_lag1 es x_delta1, x_lag1 + x_delta1
+      # es x), y b - a es a - b para un arbol
+      if (op %in% c("+", "-") && all(pob$original[p]) &&
+          ev_base(pob$nombre[p[1]]) == ev_base(pob$nombre[p[2]])) next
+      if (op == "-" && paste0("(", fb, " - ", fa, ")") %in% vistas) next
       vistas <- c(vistas, formula)
       # el hijo se calcula sobre el dataset entero: su historia necesita los
       # meses que no estan en la muestra (el lag1 de 202105 es 202104)
@@ -717,14 +786,15 @@ correr_evolutivo <- function(materializar= TRUE) {
       nombre <- sprintf("ev%02d_%04d", g, length(hijos) + 1L)
       ev_guardar_formula(nombre, v, VF, V, s)
       hijos[[length(hijos) + 1L]] <- data.table(nombre= nombre, formula= formula, nacio= as.integer(g),
-        prof= max(pob$prof[p]) + 1L, original= FALSE, importancia= NA_real_,
+        prof= max(pob$prof[p]) + 1L, original= FALSE, importancia= NA_real_, util= NA,
         padre1= pob$nombre[p[1]], padre2= pob$nombre[p[2]],
         nacio_padre1= pob$nacio[p[1]], nacio_padre2= pob$nacio[p[2]])
     }
     hijos <- rbindlist(hijos)
+    cop <- if (PARAM$EV$originales_fijas) sigue[original == FALSE] else sigue
     nac <- rbind(
       if (nrow(hijos)) hijos[, .(generacion= g, nombre, formula, padre1, padre2, nacio_padre1, nacio_padre2)],
-      if (nrow(sigue)) sigue[, .(generacion= g, nombre, formula= paste0(formula, " * 1"),
+      if (nrow(cop)) cop[, .(generacion= g, nombre, formula= paste0(formula, " * 1"),
         padre1= nombre, padre2= "uno", nacio_padre1= nacio, nacio_padre2= NA_integer_)])
     if (!is.null(nac) && nrow(nac)) fwrite(nac, ARCH_EV_NAC, sep= "\t", append= file.exists(ARCH_EV_NAC))
     EV$nacidas_acum <- EV$nacidas_acum + nrow(hijos)
@@ -737,9 +807,11 @@ correr_evolutivo <- function(materializar= TRUE) {
     cols <- ev_columnas(EV$pob)
     r <- ev_entrenar(cols, V, s, semillas)
     EV$pob[, importancia := ev_importancia_unidad(EV$pob, r$imp)]
+    EV$pob[, util := ev_util_unidad(EV$pob, r$util)]
 
     ev_log_generacion(data.table(generacion= g, poblacion_inicio= pob_inicio,
-      usadas= sum(EV$pob$importancia > 0), copias= nrow(sigue), uso_minimo_hijos= uso_minimo,
+      usadas= sum(EV$pob$util), copias= nrow(cop), uso_minimo_hijos= uso_minimo,
+      canaritos= r$canaritos, umbral_canaritos= round(r$umbral, 1),
       columnas= length(cols),
       nacidas= nrow(hijos), no_pasan= nrow(no_pasa), poblacion= nrow(EV$pob),
       originales_vivas= sum(EV$pob$original), generadas_vivas= sum(!EV$pob$original),
@@ -758,9 +830,9 @@ correr_evolutivo <- function(materializar= TRUE) {
 
   # --- la poblacion final ---------------------------------------------------
   pob <- EV$pob
-  fwrite(pob[order(-importancia)], ARCH_EV_POB, sep= "\t")
+  fwrite(pob[order(-importancia)][, historia := PARAM$EV$historia], ARCH_EV_POB, sep= "\t")
   # las mejores formulas: las generadas que el ultimo modelo uso, por importancia
-  fwrite(pob[original == FALSE & importancia > 0][order(-importancia),
+  fwrite(pob[original == FALSE & util == TRUE][order(-importancia),
              .(nombre, formula, nacio, prof, importancia)], ARCH_EV_MEJ, sep= "\t")
   if (materializar) ev_materializar(pob, originales)
   texto_evolutivo()
@@ -801,6 +873,13 @@ ev_materializar <- function(pob, originales) {
 ev_desde <- function(arch) {
   if (!file.exists(arch)) stop("EV_POBLACION_DESDE: no existe ", arch)
   pob <- fread(arch, sep= "\t")
+  # la historia de las formulas es la de la busqueda que armo la poblacion
+  if ("historia" %in% names(pob)) {
+    h <- isTRUE(as.logical(pob$historia[1]))
+    if (h != PARAM$EV$historia)
+      loguear("evolutivo: la busqueda tenia EV_HISTORIA =", h, "y esta corrida no: uso el de la busqueda")
+    PARAM$EV$historia <<- h
+  }
   originales <- setdiff(names(dataset)[sapply(dataset, is.numeric)], EV_NO_VARIABLES)
   originales <- originales[!startsWith(originales, "canarito")]
   loguear("evolutivo: poblacion de", arch, "-", nrow(pob), "columnas,", sum(!pob$original), "formulas")
@@ -861,7 +940,7 @@ texto_evolutivo <- function() {
   if (!file.exists(ARCH_EV_GEN)) return("El evolutivo no termino ninguna generacion.")
   gen <- fread(ARCH_EV_GEN, sep= "\t")
   paste0("FE evolutivo (seleccion ", PARAM$EV$seleccion, ", tope ", max(gen$poblacion), "):\n",
-    paste(sprintf("  gen %2d: poblacion %5d | usadas %5d | pasan (X * 1) %5d%s | nacen %4d | originales vivas %5d | generadas %5d | prof max %2d | imp generadas %5.1f%% | meseta %s | max %s | prueba %s",
+    paste(sprintf("  gen %2d: poblacion %5d | sirven %5d | pasan (X * 1) %5d%s | nacen %4d | originales vivas %5d | generadas %5d | prof max %2d | imp generadas %5.1f%% | meseta %s | max %s | prueba %s",
       gen$generacion, gen$poblacion, gen$usadas, gen$copias, ifelse(gen$uso_minimo_hijos, "*", " "),
       gen$nacidas, gen$originales_vivas, gen$generadas_vivas, gen$prof_max,
       100 * gen$importancia_generadas, miles(gen$ganancia_meseta), miles(gen$ganancia_max),
@@ -2373,8 +2452,8 @@ PARAM$hipeparametertuning$hs <- makeParamSet(
 # Techo de num_iterations y num_leaves configurable desde el .env, en log2.
 # Default = el rango del z635: 2^10 = 1024 arboles y 2^11 = 2048 hojas.
 # En WF9501 las 5 mejores evaluaciones quedaron pegadas a esos dos techos.
-PARAM$BO$techo_log2_num_iterations <- as.numeric(Sys.getenv("BO_TECHO_LOG2_ITERACIONES", "10"))
-PARAM$BO$techo_log2_num_leaves     <- as.numeric(Sys.getenv("BO_TECHO_LOG2_HOJAS", "11"))
+PARAM$BO$techo_log2_num_iterations <- as.numeric(env_o("BO_TECHO_LOG2_ITERACIONES", "10"))
+PARAM$BO$techo_log2_num_leaves     <- as.numeric(env_o("BO_TECHO_LOG2_HOJAS", "11"))
 PARAM$hipeparametertuning$hs$pars$num_iterations$upper <- PARAM$BO$techo_log2_num_iterations
 PARAM$hipeparametertuning$hs$pars$num_leaves$upper     <- PARAM$BO$techo_log2_num_leaves
 loguear("BO: rango num_iterations 2^", PARAM$hipeparametertuning$hs$pars$num_iterations$lower,
@@ -2536,6 +2615,11 @@ fin_etapa(paste0("Mejor AUC: ", round(tb_bayesiana[1, y], 6), "\n",
 # 9.7.3 PRODUCCION
 # ===========================================================================
 
+# RAM: los datasets de la BO ya no se usan (con HT_FIJO ni se construyen y
+# free_raw_data no libera la matriz): con miles de columnas son decenas de GB
+if (exists("dtrain")) rm(dtrain)
+if (exists("dvalidate")) rm(dvalidate)
+gc(verbose= FALSE)
 etapa("final training")
 # --- z635 celda 100 ---
 # uno los parametros fijos y los mejores encontrados de los variables
