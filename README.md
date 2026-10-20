@@ -123,6 +123,9 @@ cuántas generadas usa el modelo final y en qué puestos.
 | `EV_GENERACIONES` | 10 | |
 | `EV_TOPE` | 0 | tamaño de la población; 0 = las columnas con las que llega el dataset |
 | `EV_UNDERSAMPLING` | 1 | fracción de los CONTINUA en el LightGBM de la importancia (1 = todos) |
+| `EV_ORIGINALES_FIJAS` | 1 | las originales pasan siempre y la genética agrega hasta `EV_FORMULAS` fórmulas; 0: compite toda la población por el tope y las fórmulas reemplazan columnas |
+| `EV_FORMULAS` | 500 | lugares para fórmulas, con originales fijas |
+| `EV_HISTORIA` | 1 | cada fórmula tiene su propia historia (`_lag1`, `_lag2`, `_delta1`, `_delta2`, `_tend6`, como el FE histórico) en cada generación y en el dataset final; su importancia es la suma de las 6 columnas. 0: la fórmula sola |
 | `EV_SOLO` | 0 | 1: corrida de búsqueda. FE + evolutivo, graba la población y las mejores fórmulas y termina (sin BO, modelo final ni Kaggle) |
 | `EV_CONTROL` | 0 | 1 (con `EV_SOLO`): en la misma corrida corre después el evolutivo con selección al azar, para comparar |
 | `EV_POBLACION_DESDE` | | ruta a un `evolutivo_poblacion.txt` de una búsqueda: no evoluciona, mete esa población y sigue con el workflow completo |

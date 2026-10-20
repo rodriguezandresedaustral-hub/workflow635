@@ -27,6 +27,7 @@ GRUPO <- "B"
 PARAM <- list(semilla_primigenia= 100213, ganancia= list(acierto= 975000, error= -25000),
   BO= list(ht_fijo= ""), GA= list(modo= "evolutivo"),
   EV= list(seleccion= "importancia", generaciones= 4L, tope= 0L, min_hijos= 0.25, presion= 10,
+           originales_fijas= FALSE, formulas= 0L, historia= FALSE,
            semillas_n= 1L, borrar_muertas= TRUE, mail_cada_gen= 1,
            imp= list(training= c(202012, 202101, 202102, 202103), validation= 202105L, undersampling= 1,
                      prueba= 202104L)),
@@ -51,6 +52,8 @@ dataset <- rbindlist(lapply(meses, function(m) {
   d
 }))
 dataset[, azar := runif(.N)]
+# el evolutivo ordena el dataset por cliente y mes (lo necesita la historia)
+setorder(dataset, numero_de_cliente, foto_mes)
 originales <- paste0("v", 1:20)
 dataset0 <- copy(dataset)
 
@@ -130,4 +133,58 @@ ok(all(gen_b$nombre %in% names(dataset)), "EV_POBLACION_DESDE: las formulas de l
 ok(isTRUE(all.equal(dataset[[gen_b$nombre[1]]], ev_evaluar(gen_b$formula[1], dataset0))), "EV_POBLACION_DESDE: misma formula, mismos valores")
 ok(!any(setdiff(originales, pob_busqueda$nombre) %in% names(dataset)), "EV_POBLACION_DESDE: las originales que no pasaron salen")
 ok(inherits(try(ev_desde("no_existe.txt"), silent= TRUE), "try-error"), "EV_POBLACION_DESDE con un archivo que no existe corta")
+
+# EV_ORIGINALES_FIJAS: las originales pasan siempre y la genetica agrega hasta
+# EV_FORMULAS formulas (10 aca); nunca se borra una original
+unlink(c(ARCH_EV_GEN, ARCH_EV_NAC, ARCH_EV_POB, ARCH_EV_MEJ, CK_EV))
+PARAM$EV$seleccion <- "importancia"; PARAM$EV$generaciones <- 4L
+PARAM$EV$originales_fijas <- TRUE; PARAM$EV$formulas <- 10L
+dataset <- copy(dataset0)
+correr_evolutivo()
+gen_f <- fread(ARCH_EV_GEN); pob_f <- fread(ARCH_EV_POB)
+ok(all(gen_f$originales_vivas == 20), "originales fijas: las 20 originales siguen en todas las generaciones")
+ok(all(gen_f$poblacion[-1] == 30), "originales fijas: la poblacion es 20 originales + 10 formulas")
+ok(all(gen_f$generadas_vivas[-1] <= 10), "originales fijas: las formulas no pasan su cupo")
+ok(all(gen_f$nacidas[-1] >= 3), "originales fijas: siempre nacen al menos 3 (EV_MIN_HIJOS = 0,25 de 10)")
+ok(all(originales %in% names(dataset)), "originales fijas: ninguna original sale del dataset final")
+ok(all(pob_f[original == FALSE, nombre] %in% names(dataset)), "originales fijas: las formulas finales entran al dataset")
+unlink(c(ARCH_EV_GEN, ARCH_EV_NAC, ARCH_EV_POB, ARCH_EV_MEJ, CK_EV))
+PARAM$EV$seleccion <- "azar"; PARAM$EV$generaciones <- 2L
+dataset <- copy(dataset0)
+correr_evolutivo(materializar= FALSE)
+ok(all(fread(ARCH_EV_GEN)$originales_vivas == 20), "originales fijas con seleccion al azar: las originales tambien quedan")
+
+# EV_HISTORIA: cada formula con su lag1, lag2, delta1, delta2 y tend6
+# 1. ev_historia contra un calculo directo: lags por cliente y la pendiente de
+#    lm() sobre la fila actual y las 5 anteriores del cliente, sin los NA
+set.seed(7)
+id <- rep(1:3, times= c(9, 4, 1)); vh <- round(rnorm(14), 2); vh[c(3, 11)] <- NA
+h <- ev_historia(vh, id)
+ref_lag <- function(k) sapply(seq_along(vh), function(i) if (i - k >= 1 && id[i - k] == id[i]) vh[i - k] else NA)
+ref_tend <- sapply(seq_along(vh), function(i) {
+  w <- max(1, i - 5):i; w <- w[id[w] == id[i]]; y <- vh[w]; x <- seq_along(w)
+  ok <- !is.na(y); if (sum(ok) < 2) NA else unname(coef(lm(y[ok] ~ x[ok]))[2])
+})
+ok(isTRUE(all.equal(h$lag1, ref_lag(1))) && isTRUE(all.equal(h$lag2, ref_lag(2))), "historia: lag1 y lag2 por cliente (no cruzan clientes)")
+ok(isTRUE(all.equal(h$delta1, vh - ref_lag(1))) && isTRUE(all.equal(h$delta2, vh - ref_lag(2))), "historia: delta1 y delta2")
+ok(isTRUE(all.equal(h$tend6, ref_tend)), "historia: tend6 igual a la pendiente de lm() de 6 filas del cliente")
+# 2. el evolutivo con historia: el LightGBM ve la formula y su historia, y el dataset final tambien
+unlink(c(ARCH_EV_GEN, ARCH_EV_NAC, ARCH_EV_POB, ARCH_EV_MEJ, CK_EV))
+PARAM$EV$seleccion <- "importancia"; PARAM$EV$generaciones <- 3L
+PARAM$EV$originales_fijas <- TRUE; PARAM$EV$formulas <- 5L; PARAM$EV$historia <- TRUE
+dataset <- copy(dataset0)
+correr_evolutivo()
+gen_h <- fread(ARCH_EV_GEN); pob_h <- fread(ARCH_EV_POB)
+ok(all(gen_h$columnas[-1] == 20 + 5 * 6), "historia: el LightGBM ve 20 originales + 5 formulas x 6 columnas")
+fh <- pob_h[original == FALSE]
+cols_h <- c(fh$nombre, as.vector(outer(fh$nombre, EV_SUFIJOS_HIST, paste, sep= "_")))
+ok(all(cols_h %in% names(dataset)), "historia: cada formula entra al dataset con lag1, lag2, delta1, delta2 y tend6")
+v1 <- ev_evaluar(fh$formula[1], dataset0); h1 <- ev_historia(v1, dataset0$numero_de_cliente)
+ok(isTRUE(all.equal(dataset[[paste0(fh$nombre[1], "_tend6")]], h1$tend6)) &&
+   isTRUE(all.equal(dataset[[paste0(fh$nombre[1], "_lag1")]], h1$lag1)), "historia: la del dataset final coincide con la formula recalculada")
+ok(all(originales %in% names(dataset)), "historia: con originales fijas no sale ninguna original")
+# retomar con historia: rearma las formulas y su historia desde el checkpoint
+dataset <- copy(dataset0)
+correr_evolutivo(materializar= FALSE)
+ok(nrow(fread(ARCH_EV_GEN)) == nrow(gen_h), "historia: retomar desde el checkpoint no repite generaciones")
 cat("TODO OK\n")
