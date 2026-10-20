@@ -19,7 +19,7 @@ EXP <- if (length(args)) args[1] else "/home/ds/buckets/b1/exp"
 SALIDA <- file.path(EXP, "brazos_v3")
 dir.create(SALIDA, showWarnings= FALSE)
 BRAZOS <- c(E0= 9920L, E5= 9925L, E6= 9926L, E7= 9927L, E8= 9928L, E9= 9929L,
-            E10= 9930L, E11= 9931L, E12= 9932L)
+            E10= 9933L, E11= 9931L, E12= 9932L, E13= 9934L)
 # comparaciones fijadas antes de correr, cada una contesta una pregunta. Holm
 # va por tanda: v3 (el codigo del PR 8, ya medida) y v4 (originales fijas,
 # historia de las formulas y piso de canaritos)
@@ -33,7 +33,10 @@ COMPARACIONES <- list(
   c("E11", "E5", "lo que aporta el evolutivo v4 (los dos sin canaritos)", "v4"),
   c("E11", "E12", "si la importancia sirve (contra copias y padres al azar)", "v4"),
   c("E11", "E10", "lo que aportan la historia de las formulas y el piso de canaritos", "v4"),
-  c("E10", "E5", "originales fijas sin historia contra la base", "v4"))
+  c("E10", "E5", "originales fijas sin historia contra la base", "v4"),
+  # desglose de E11 - E10 (Holm aparte): que parte es la historia y que parte el piso
+  c("E13", "E10", "lo que aporta la historia de las formulas (los dos sin piso)", "v4 desglose"),
+  c("E11", "E13", "lo que aporta el piso de canaritos (los dos con historia)", "v4 desglose"))
 
 millones <- function(x) formatC(x / 1e6, format= "f", digits= 2, decimal.mark= ",", big.mark= ".")
 p3 <- function(x) formatC(x, format= "f", digits= 3, decimal.mark= ",")
@@ -106,7 +109,7 @@ for (m in c("meseta", "maximo")) {
 }
 
 # --- el evolutivo por dentro ----------------------------------------------------
-ev <- rbindlist(lapply(runs[brazo %in% c("E6", "E7", "E8", "E10", "E11", "E12")]$carpeta, function(d) {
+ev <- rbindlist(lapply(runs[brazo %in% c("E6", "E7", "E8", "E10", "E11", "E12", "E13")]$carpeta, function(d) {
   f <- file.path(d, "evolutivo_generaciones.txt")
   if (!file.exists(f)) return(NULL)
   g <- fread(f, sep= "\t")

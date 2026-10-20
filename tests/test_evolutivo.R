@@ -224,10 +224,16 @@ ok(gen_c$usadas[1] < 22, "piso: no todas las originales le ganan a las canaritos
 ok(all(pob_c[original == FALSE & util == TRUE, importancia] > 0), "piso: lo que sirve tiene importancia")
 ok(sum(pob_c[original == FALSE, util], na.rm= TRUE) == nrow(fread(ARCH_EV_MEJ)), "piso: evolutivo_mejores.txt son las formulas que sirven")
 hijos_c <- nac_c[padre2 != "uno"]
-base_de <- function(x) sub("_(lag1|lag2|delta1|delta2|tend6)$", "", x)
-triviales <- hijos_c[grepl(" [+-] ", formula) & !grepl("^ev", padre1) & !grepl("^ev", padre2) &
-                     base_de(padre1) == base_de(padre2) & !grepl("[*/]", formula)]
-ok(nrow(triviales) == 0, "sin hijos triviales: no nace x + x_lag1 ni x - x_lag1")
+triviales <- hijos_c[!grepl("^ev", padre1) & !grepl("^ev", padre2) &
+                     mapply(ev_trivial, padre1, padre2, sub("^[(].* ([-+*/]) .*[)]$", "\\1", formula))]
+ok(nrow(triviales) == 0, "sin hijos triviales: no nace x - x_lag1 ni x_lag1 + x_delta1")
+ok(ev_trivial("v1", "v1_lag1", "-") && ev_trivial("v1_lag1", "v1", "-") && ev_trivial("v1_delta2", "v1", "-") &&
+   ev_trivial("v1_lag1", "v1_delta1", "+") && ev_trivial("v1", "v1", "+"),
+   "ev_trivial: x - x_lagk, x - x_deltak, x_lagk + x_deltak y x + x son triviales")
+ok(!ev_trivial("v1_lag1", "v1_lag2", "-") && !ev_trivial("v1_delta1", "v1_delta2", "-") &&
+   !ev_trivial("v1", "v1_lag1", "+") && !ev_trivial("v1", "v1_tend6", "+") &&
+   !ev_trivial("v1_lag1", "v1_delta2", "+") && !ev_trivial("v1", "v1_lag1", "*") && !ev_trivial("v1", "v2_lag1", "-"),
+   "ev_trivial: x_lag1 - x_lag2, x_delta1 - x_delta2, x + x_lag1, x + x_tend6 y los * / pueden nacer")
 resta <- hijos_c[grepl("^\\(.* - .*\\)$", formula) & !grepl("[(].*[(]", formula), formula]
 partes <- regmatches(resta, regexec("^\\((.*) - (.*)\\)$", resta))
 invertidas <- vapply(partes, function(x) paste0("(", x[3], " - ", x[2], ")"), "")
