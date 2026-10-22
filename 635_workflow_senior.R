@@ -605,7 +605,7 @@ ev_entrenar <- function(nombres, V, s, semillas) {
       umbral <- NA_real_
       util[im_n$Feature] <- im_n$Gain > 0
     }
-    list(imp= imp, util= util, umbral= umbral,
+    list(imp= imp, util= util, umbral= umbral, con_gain= sum(im_n$Gain > 0),
          meseta= mean(sort(gan_acum, decreasing= TRUE)[1:min(500, length(gan_acum))]),
          maximo= max(gan_acum),
          meseta_prueba= mean(sort(gan_pr, decreasing= TRUE)[1:min(500, length(gan_pr))]),
@@ -616,6 +616,8 @@ ev_entrenar <- function(nombres, V, s, semillas) {
        # con varias semillas, sirve si sirve en la mitad o mas
        util= (Reduce(`+`, lapply(res, `[[`, "util")) / length(res)) >= 0.5,
        canaritos= n_can, umbral= mean(sapply(res, `[[`, "umbral")),
+       # columnas (sin canaritos) con gain > 0: si "sirven" es casi igual, el piso no corta
+       con_gain= mean(sapply(res, `[[`, "con_gain")),
        meseta= mean(sapply(res, `[[`, "meseta")),
        maximo= mean(sapply(res, `[[`, "maximo")),
        meseta_prueba= mean(sapply(res, `[[`, "meseta_prueba")),
@@ -636,6 +638,19 @@ ev_util_unidad <- function(pob, util) {
 
 # la variable original de una columna del FE historico (x_lag1 -> x)
 ev_base <- function(n) sub("_(lag1|lag2|delta1|delta2|tend6)$", "", n)
+
+# un hijo a op b que solo reconstruye una columna que ya existe. Con dos
+# versiones de la misma variable original: x - x_lagk (= x_deltak), x - x_deltak
+# (= x_lagk) y sus inversas, x_lagk + x_deltak (= x), y x + x o x - x. El resto
+# (x_lag1 - x_lag2, x_delta1 - x_delta2, x + x_lag1, x + x_tend6) es informacion
+# que el FE historico no tiene y puede nacer
+ev_trivial <- function(a, b, op) {
+  if (!op %in% c("+", "-") || ev_base(a) != ev_base(b)) return(FALSE)
+  if (a == b) return(TRUE)
+  sufijo <- function(n) if (n == ev_base(n)) "" else substring(n, nchar(ev_base(n)) + 2L)
+  par <- paste(sort(c(sufijo(a), sufijo(b))), collapse= "|")
+  if (op == "-") par %in% c("|lag1", "|lag2", "|delta1", "|delta2") else par %in% c("delta1|lag1", "delta2|lag2")
+}
 
 # probabilidad de ser padre: ranking lineal por importancia. El primero pesa
 # EV_PRESION y el ultimo 1; los empatados toman el peso del puesto mas bajo de
@@ -715,7 +730,7 @@ correr_evolutivo <- function(materializar= TRUE) {
     g0 <- 0L
     ev_log_generacion(data.table(generacion= 0L, poblacion_inicio= length(originales),
       usadas= sum(r$util[originales]), copias= 0L, uso_minimo_hijos= FALSE,
-      canaritos= r$canaritos, umbral_canaritos= round(r$umbral, 1),
+      canaritos= r$canaritos, umbral_canaritos= round(r$umbral, 1), con_gain= round(r$con_gain),
       columnas= length(originales),
       nacidas= 0L, no_pasan= 0L, poblacion= length(originales),
       originales_vivas= length(originales), generadas_vivas= 0L, prof_max= 0L, prof_media= 0,
@@ -772,11 +787,10 @@ correr_evolutivo <- function(materializar= TRUE) {
       if (op %in% c("+", "*") && fb < fa) { p <- rev(p); tmp <- fa; fa <- fb; fb <- tmp }
       formula <- paste0("(", fa, " ", op, " ", fb, ")")
       if (formula %in% vistas) next
-      # hijos que no agregan nada: la suma o resta de dos versiones de la misma
-      # variable original ya existe (x - x_lag1 es x_delta1, x_lag1 + x_delta1
-      # es x), y b - a es a - b para un arbol
-      if (op %in% c("+", "-") && all(pob$original[p]) &&
-          ev_base(pob$nombre[p[1]]) == ev_base(pob$nombre[p[2]])) next
+      # hijos que no agregan nada: los que reconstruyen una columna del FE
+      # historico (ver ev_trivial), y b - a si ya existe a - b (para un arbol
+      # son la misma)
+      if (all(pob$original[p]) && ev_trivial(pob$nombre[p[1]], pob$nombre[p[2]], op)) next
       if (op == "-" && paste0("(", fb, " - ", fa, ")") %in% vistas) next
       vistas <- c(vistas, formula)
       # el hijo se calcula sobre el dataset entero: su historia necesita los
@@ -811,7 +825,7 @@ correr_evolutivo <- function(materializar= TRUE) {
 
     ev_log_generacion(data.table(generacion= g, poblacion_inicio= pob_inicio,
       usadas= sum(EV$pob$util), copias= nrow(cop), uso_minimo_hijos= uso_minimo,
-      canaritos= r$canaritos, umbral_canaritos= round(r$umbral, 1),
+      canaritos= r$canaritos, umbral_canaritos= round(r$umbral, 1), con_gain= round(r$con_gain),
       columnas= length(cols),
       nacidas= nrow(hijos), no_pasan= nrow(no_pasa), poblacion= nrow(EV$pob),
       originales_vivas= sum(EV$pob$original), generadas_vivas= sum(!EV$pob$original),

@@ -12,9 +12,10 @@ pipeline y, en cada semilla, todos los brazos con todo lo demás igual.
 | E7 | WF9927 | E6 con `EV_SELECCION=azar` | ¿sirve la importancia para elegir qué pasa y quién se reproduce? |
 | E8 | WF9928 | E6 con `EV_MIN_HIJOS=1` (sin copias) | ¿sirve que lo bueno pase igual (`X * 1`)? |
 | E9 | WF9929 | E0 con `FT_ALFA=0.95` | pesos temporales 0,95^k en el final train |
-| E10 | WF9930 | originales fijas + 500 fórmulas, sin historia y sin piso | lo que Marcos corrió con el #10 (`WF9930_s100213`) |
+| E10 | WF9933 | originales fijas + 500 fórmulas, sin historia y sin piso | lo del #10 con el código v4 (`WF9930_s100213` fue con fbf6866 y no entra) |
 | E11 | WF9931 | originales fijas + 500 fórmulas, **cada fórmula con su historia** y **piso de canaritos** | el evolutivo v4 |
 | E12 | WF9932 | E11 con `EV_SELECCION=azar` | control de E11: ¿sirve la importancia? |
+| E13 | WF9934 | E11 sin piso de canaritos | desglose: ¿la historia o el piso? (fuera de la cola por defecto) |
 
 **E6–E9 se corrieron con el código del #8 (tanda v3).** Con este código esos `.env` ya no lo
 reproducen: por defecto ahora las originales quedan fijas, cada fórmula tiene su historia y
@@ -37,10 +38,15 @@ Tanda v4, con su propio Holm (4 comparaciones):
 - **E11 − E10**: lo que aportan la historia de las fórmulas y el piso de canaritos.
 - **E10 − E5**: originales fijas sin historia contra la base.
 
+Desglose de E11 − E10, con su propio Holm (2 comparaciones; hace falta correr E13):
+
+- **E13 − E10**: lo que aporta la historia de las fórmulas, las dos sin piso.
+- **E11 − E13**: lo que aporta el piso de canaritos, las dos con historia.
+
 Con 6 semillas el p más chico es 0,031 y Holm sobre 4 lo lleva a 0,125: **hacen falta las
 10-12 semillas** para poder ver algo.
 
-**RAM de E11 y E12:** ~4.500 columnas (1.509 + 500 × 6). Con `EV_UNDERSAMPLING=1` el evolutivo
+**RAM de E11, E12 y E13:** ~4.500 columnas (1.509 + 500 × 6). Con `EV_UNDERSAMPLING=1` el evolutivo
 pide ~300-350 GB (estimado, sin medir), y el dataset final con todas las columnas, ~180 GB más
 el final train. En una máquina de 256 GB, `EV_UNDERSAMPLING=0.2`: achica la muestra del
 LightGBM de la importancia, no corta fórmulas. Medir una generación antes de la cola entera.
