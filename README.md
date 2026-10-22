@@ -11,6 +11,8 @@ cátedra, para los dos grupos del experimento colaborativo.
 | Predice | 202109 | 202107 |
 | Testing | Kaggle (sube los cortes 8000 – 12000) | ganancia contra la clase real de 202107 |
 
+> **Resultados finales (grupo B, 2026-10-22):** ver [RESULTADOS.md](RESULTADOS.md): brazos E0–E11, el laboratorio de final train (`lab/`) y cómo reproducir cada número.
+
 ## Qué cambia respecto del z635
 
 Las funciones y celdas de la cátedra están copiadas **sin cambios** en
