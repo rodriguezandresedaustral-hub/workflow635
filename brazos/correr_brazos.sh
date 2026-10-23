@@ -1,33 +1,35 @@
 #!/bin/bash
 # ===========================================================================
-# Cola de brazos del workflow635 v2 en la VM (grupo B, 202107 con clase real)
-#   E0 = sin genetica, E1 = genetica v2 con 6 meses de fitness (ganadoras
-#   forzadas, el veredicto del control queda registrado), E2 = formulas al azar,
-#   E3 = E1 con todos los meses de fitness.
+# Cola de brazos del workflow635 v3 (PR 8) en la VM (grupo B, 202107 con clase real)
+#   E0 = base con canaritos, E5 = base sin canaritos, E6 = FE evolutivo,
+#   E7 = evolutivo con seleccion al azar, E8 = evolutivo sin clones,
+#   E9 = base con pesos 0.95^k en el final train.
 #   Por cada semilla del pipeline corre todos los brazos seguidos: si la cola se
 #   corta a mitad, lo que termino ya esta pareado por semilla. Las semillas son
 #   las 10 asignadas (Andres y Marcos), intercaladas.
 #
 # Corre como ds, duena del bucket (en las VM de la catedra los demas usuarios
 # no pueden leerlo). Desde un usuario con sudo, para que apague al terminar:
-#   cd /tmp && nohup setsid bash -c 'sudo -u ds -H bash /home/ds/buckets/b1/wf635v2/brazos/correr_brazos.sh; sudo poweroff' > ~/cola_brazos.log 2>&1 < /dev/null &
+#   cd /tmp && nohup setsid bash -c 'sudo -u ds -H bash /home/ds/buckets/b1/wf635v3/brazos/correr_brazos.sh; sudo poweroff' > ~/cola_brazos.log 2>&1 < /dev/null &
 # Opcionales (con sudo -u ds -H env VAR=... bash ...):
 #   SEMILLAS="100213 100313"  BRAZOS="E0"  REINTENTOS=1
-#   o, por VM, un archivo $EXP/brazos_v2/semillas_<hostname> con sus semillas
+#   o, por VM, un archivo $EXP/brazos_v3/semillas_<hostname> con sus semillas
 #   BORRAR_CHECKPOINTS=1   borra los .fst de checkpoints/ de cada corrida TERMINADA
-# Para frenar al terminar la corrida en curso: touch $EXP/brazos_v2/PARAR
+# Para frenar al terminar la corrida en curso: touch $EXP/brazos_v3/PARAR
 # Una corrida con TERMINADO se saltea; una que fallo se relanza y retoma desde
 # sus checkpoints.
 # ===========================================================================
 set -u
 DIR=$(cd "$(dirname "$0")/.." && pwd)
 EXP=/home/ds/buckets/b1/exp
-LOGS=$EXP/brazos_v2
+LOGS=$EXP/brazos_v3
 # para repartir la cola entre varias VM: $LOGS/semillas_<hostname> con las semillas de cada una
 F=$LOGS/semillas_$(hostname -s)
 [ -z "${SEMILLAS:-}" ] && [ -f "$F" ] && SEMILLAS=$(tr '\n' ' ' < "$F")
 SEMILLAS=${SEMILLAS:-"100213 271211 100313 353161 100613 487757 100913 641371 101113 823541"}
-BRAZOS=${BRAZOS:-"E0 E1 E2 E3"}
+# v4: E6-E9 se corrieron con el codigo del PR 8; con este codigo esos .env ya no
+# lo reproducen. Por defecto, la base y los brazos v4 (los terminados se saltean)
+BRAZOS=${BRAZOS:-"E0 E5 E10 E11 E12"}
 REINTENTOS=${REINTENTOS:-1}
 BORRAR_CHECKPOINTS=${BORRAR_CHECKPOINTS:-1}
 
@@ -40,7 +42,7 @@ exec 9>/tmp/correr_brazos.lock
 flock -n 9 || { echo "ya hay una cola corriendo"; exit 1; }
 
 log() { echo "$(date '+%F %T') | $*" >> "$LOGS/cola.log"; }
-VERSION="v2 $(md5sum "$DIR/635_workflow_senior.R" | cut -c1-8)"
+VERSION="v3 $(md5sum "$DIR/635_workflow_senior.R" | cut -c1-8)"
 [ -f "$LOGS/tiempos.tsv" ] || printf 'corrida\tbrazo\tsemilla\tintento\trc\tminutos\n' > "$LOGS/tiempos.tsv"
 log "cola: semillas [$SEMILLAS] brazos [$BRAZOS] script $VERSION"
 
@@ -48,7 +50,7 @@ log "cola: semillas [$SEMILLAS] brazos [$BRAZOS] script $VERSION"
 Rscript -e '
 lib <- Sys.getenv("R_LIBS_USER"); dir.create(lib, recursive= TRUE, showWarnings= FALSE)
 .libPaths(c(lib, .libPaths()))
-p <- c("data.table", "R.utils", "fst", "gramEvol", "lightgbm", "mlrMBO", "DiceKriging",
+p <- c("data.table", "R.utils", "fst", "lightgbm", "mlrMBO", "DiceKriging",
        "lhs", "lubridate", "mice", "yaml", "Rcpp")
 f <- p[!vapply(p, requireNamespace, logical(1), quietly= TRUE)]
 if (length(f)) install.packages(f, lib= lib, repos= "https://cloud.r-project.org",
@@ -66,13 +68,18 @@ for s in $SEMILLAS; do
     if [ -f "$EXP/$RUN/TERMINADO" ]; then log "$RUN ya estaba terminada"; continue; fi
     for intento in $(seq 0 "$REINTENTOS"); do
       log "$RUN arranca (intento $intento, $(free -g | awk '/^Mem/{print $7}') GB libres)"
+      # RAM: el pico de cada corrida queda en $LOGS/ram_<corrida>.tsv (lo que htop mostraria)
+      ( while sleep 60; do echo "$(date '+%F %T')	$(free -g | awk '/^Mem/{print $3}')"; done ) >> "$LOGS/ram_$RUN.tsv" &
+      RAM_PID=$!
       t0=$(date +%s)
       ( cd "$DIR" && WF_VERSION="$VERSION" Rscript 635_workflow_senior.R "$ENV" "$s" ) >> "$LOGS/$RUN.log" 2>&1
       rc=$?
+      kill "$RAM_PID" 2>/dev/null
+      log "$RUN RAM usada maxima: $(cut -f2 "$LOGS/ram_$RUN.tsv" | sort -n | tail -1) GB"
       min=$(( ($(date +%s) - t0) / 60 ))
       printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$RUN" "$b" "$s" "$intento" "$rc" "$min" >> "$LOGS/tiempos.tsv"
       if [ -f "$EXP/$RUN/TERMINADO" ]; then
-        log "$RUN TERMINADO en $min min, meseta $(cat "$EXP/$RUN/ganancia_meseta.txt" 2>/dev/null)"
+        log "$RUN TERMINADO en $min min, meseta $(cat "$EXP/$RUN/ganancia_meseta.txt" 2>/dev/null), maximo $(tail -n 1 "$EXP/$RUN/ganancia_202107.txt" 2>/dev/null | cut -f2)"
         [ "$BORRAR_CHECKPOINTS" = 1 ] && rm -f "$EXP/$RUN"/checkpoints/*.fst
         break
       fi

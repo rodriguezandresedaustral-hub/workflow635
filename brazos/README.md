@@ -1,155 +1,136 @@
-# Experimento de brazos (grupo B)
+# Experimento de brazos v3 (grupo B)
 
-¿Las variables de la genética mejoran el **modelo final**? El fitness es un
-LightGBM chico sobre una muestra sin lags, así que no alcanza con que ganen en
-la búsqueda: hay que pasarlas por el workflow entero y medir contra la clase
-real. Una corrida en el LB público no sirve para esto: el público es el 30%
-de 202109 y el desvío de la diferencia entre dos corridas ronda los 7 M.
+¿El **FE evolutivo** (PR 8) mejora el modelo final? Se mide con el workflow
+entero contra la clase real de 202107 (grupo B), varias semillas del
+pipeline y, en cada semilla, todos los brazos con todo lo demás igual.
 
-Por eso: grupo B (ganancia real en 202107), varias semillas del pipeline y,
-en cada semilla, cuatro brazos con todo lo demás igual.
-
-| Brazo | Experimento | `GA_MODO` | Pregunta |
+| Brazo | Experimento | Qué cambia | Pregunta |
 |---|---|---|---|
-| E0 | WF9900 | `nada` | la base, sin FE genético |
-| E1 | WF9901 | `genetica` + `GA_FORZAR=1`, fitness con 6 meses | ¿las 3 ganadoras de la genética mejoran el modelo final? |
-| E2 | WF9902 | `azar` | ¿3 fórmulas cualquiera de la misma gramática hacen lo mismo? |
-| E3 | WF9903 | `genetica` + `GA_FORZAR=1`, fitness con todos los meses | ¿entrenar el fitness con toda la historia elige mejores fórmulas? |
-| E4 | WF9904 | como E1, con la búsqueda en 202105 y el control en 202103 (`GA_BUSQUEDA_EN_BO=1`) | ¿buscar en el mes con clase más cercano al testing elige mejores fórmulas? (la idea del #3, en grupo B) |
+| E0 | WF9920 | `GA_MODO=nada` | la base de la cátedra, con canaritos |
+| E5 | WF9925 | `GA_MODO=nada`, `CN_RUN=0` | la base sin canaritos (el evolutivo los apaga) |
+| E6 | WF9926 | `GA_MODO=evolutivo`, pasa (`X * 1`) lo que tiene importancia, hijos en el resto | el evolutivo |
+| E7 | WF9927 | E6 con `EV_SELECCION=azar` | ¿sirve la importancia para elegir qué pasa y quién se reproduce? |
+| E8 | WF9928 | E6 con `EV_MIN_HIJOS=1` (sin copias) | ¿sirve que lo bueno pase igual (`X * 1`)? |
+| E9 | WF9929 | E0 con `FT_ALFA=0.95` | pesos temporales 0,95^k en el final train |
+| E10 | WF9933 | originales fijas + 500 fórmulas, sin historia y sin piso | lo del #10 con el código v4 (`WF9930_s100213` fue con fbf6866 y no entra) |
+| E11 | WF9931 | originales fijas + 500 fórmulas, **cada fórmula con su historia** y **piso de canaritos** | el evolutivo v4 |
+| E12 | WF9932 | E11 con `EV_SELECCION=azar` | control de E11: ¿sirve la importancia? |
+| E13 | WF9934 | E11 sin piso de canaritos | desglose: ¿la historia o el piso? (fuera de la cola por defecto) |
 
-- **E1 − E0** es lo que aporta la genética.
-- **E1 − E2** es lo que aporta *buscar*: si no es positivo, la búsqueda no
-  sirve y alcanza con sortear fórmulas.
-- **E3 − E1** es lo que aporta entrenar el fitness con todos los meses desde
-  201901 (el default, como la v1) en vez de los 6 anteriores (~4 veces más
-  filas y más lento). E3 − E0 y E3 − E2 son las mismas preguntas de arriba
-  para E3.
-- **E4 − E1** es lo que aporta buscar en el mes de la BO (202105) en vez de
-  202101. El control no puede ir después de 202105 (202107 es el testing), así
-  que queda en 202103, que la búsqueda usa para entrenar: es un control más
-  débil que el de E1.
-- E1 fuerza las ganadoras para medirlas siempre, pero registra el veredicto
-  del control: se ve si las semillas donde el control dijo "sí" son las que
-  ganan.
-- Semillas: las 10 asignadas, intercaladas para que cualquier corte de la
-  cola quede repartido: 100213, 271211, 100313, 353161, 100613, 487757,
-  100913, 641371, 101113 y 823541. Con Wilcoxon pareado hacen falta al menos
-  6 para poder llegar a p < 0,05 (el p más chico posible es 2/2^n: 0,031 con
-  6, 0,002 con 10).
-- Confirmación: E0 y E2 con 10 semillas nuevas (512959, 683323, 187223,
-  842879, 784841, 696929, 336239, 294023, 436693 y 272507), para ver si
-  E2 − E0 (+3,3 M con p 0,020 en las 10 primeras, que no sobrevive a Holm)
-  se repite. `analizar_brazos.R` la analiza aparte, como una sola comparación
-  fijada antes de correrla.
-- Con varias comparaciones, el análisis agrega el p de Holm.
-- Métrica: `ganancia_meseta.txt`, el promedio de la ganancia en 202107 en los
-  9 cortes fijos de 8.000 a 12.000 envíos.
+**E6–E9 se corrieron con el código del #8 (tanda v3).** Con este código esos `.env` ya no lo
+reproducen: por defecto ahora las originales quedan fijas, cada fórmula tiene su historia y
+pasa solo lo que le gana a las canaritos. La cola corre por defecto `E0 E5 E10 E11 E12` (lo
+terminado se saltea).
 
-Para que entre en unos días de VM, lo que no se compara está fijo en todos
-los brazos:
+Comparaciones fijadas antes de correr (`analizar_brazos.R`):
 
-- **HT fija** (`HT_FIJO`): la mejor fila del `BO_log.txt` de una corrida base
-  del grupo B; no se corre la BO. Los `.env` apuntan a la nuestra
-  (`exp/WF9600`, z635 grupo B con 30 iteraciones). En otro bucket hay que
-  apuntar a un `BO_log.txt` propio, o dejarla vacía y que cada corrida haga su
-  BO (mucho más lento).
-- **Final train** de 3 semillas (`FT_SEMILLAS_N=3`) con el 20% de los
-  CONTINUA (`FT_UNDERSAMPLING=0.2`), como entrenó la BO.
-- Sin mail (`MAIL_TO_FILE=/dev/null`) y sin Kaggle.
+- **E6 − E5**: lo que aporta el evolutivo, los dos sin canaritos.
+- **E6 − E0**: el evolutivo contra la base de la cátedra.
+- **E6 − E7**: si da lo mismo, la importancia no sirve para seleccionar.
+- **E6 − E8**: lo que aporta el clon.
+- **E5 − E0**: lo que cambia por no correr canaritos (para leer E6 − E0).
+- **E9 − E0**: los pesos alfa, solos.
 
-## Resultados (2026-10-13)
+Tanda v4, con su propio Holm (4 comparaciones):
 
-E0 y E2 con 20 semillas (las 10 de arriba y las 10 de la confirmación), E1,
-E3 y E4 con 10, más E0 y E2 en grupo A para Kaggle. El detalle por semilla y
-ronda queda en `exp/brazos_v2/analisis.txt`.
+- **E11 − E5**: lo que aporta el evolutivo v4, los dos sin canaritos. Es la pregunta de fondo.
+- **E11 − E12**: si la importancia sirve, contra copias y padres al azar.
+- **E11 − E10**: lo que aportan la historia de las fórmulas y el piso de canaritos.
+- **E10 − E5**: originales fijas sin historia contra la base.
 
-Meseta promedio en las 10 semillas (millones): E0 582,69, E1 584,41,
-E2 585,99, E3 582,83, E4 585,81.
+Desglose de E11 − E10, con su propio Holm (2 comparaciones; hace falta correr E13):
 
-| Comparación | Media | Gana | IC 95% | p Wilcoxon | p Holm |
-|---|---|---|---|---|---|
-| E2 − E0 | +3,30 | 8 de 10 | [1,13; 5,57] | 0,020 | 0,176 |
-| E4 − E0 | +3,12 | 7 de 10 | [1,02; 5,03] | 0,037 | 0,297 |
-| E1 − E0 | +1,72 | 7 de 10 | [−0,09; 3,47] | 0,111 | 0,668 |
-| E1 − E2 | −1,58 | 5 de 10 | [−4,16; 1,06] | 0,322 | 1,000 |
-| E4 − E2 | −0,18 | 5 de 10 | [−2,22; 2,03] | 0,883 | 1,000 |
-| E3 − E2 | −3,16 | 2 de 10 | [−5,94; −0,77] | 0,037 | 0,297 |
+- **E13 − E10**: lo que aporta la historia de las fórmulas, las dos sin piso.
+- **E11 − E13**: lo que aporta el piso de canaritos, las dos con historia.
 
-- **Agregar 3 fórmulas suma algo; buscarlas, no.** E2 (sorteadas) y E4 le
-  ganan a E0 por unos 3 M, pero ninguna genética le gana a E2: E1 − E2 da
-  −1,58 M y E4 − E2, −0,18 M.
-- **El control no distingue a las ganadoras del azar.** Pasan 2 de 30 rondas
-  en E1, 3 de 30 en E3 y 2 de 30 en E4 (por azar se esperan 1,5), y ninguna
-  fórmula ganó en más de una semilla.
-- **Confirmación de E2 − E0** (10 semillas nuevas, una sola comparación
-  fijada antes de correrla): +2,40 M, gana 8 de 10, IC [−0,63; 5,12], p 0,275.
-  Va para el mismo lado, pero sola no alcanza. Con las 20 semillas juntas:
-  +2,85 M, gana 16 de 20, IC [0,91; 4,65], p 0,010.
-- **Costo:** mediana de 0,6 h por corrida en E0, E2 y E4, 0,8 h en E3 y 1,3 h
-  en E1. E2 cuesta lo mismo que E0.
+Con 6 semillas el p más chico es 0,031 y Holm sobre 4 lo lleva a 0,125: **hacen falta las
+10-12 semillas** para poder ver algo.
 
-En Kaggle (E0A = WF9910, E2A = WF9912, las semillas 100213, 271211 y 100313;
-LB público, el 30% de 202109, meseta de los 9 cortes):
+**RAM de E11, E12 y E13:** ~4.500 columnas (1.509 + 500 × 6). Con `EV_UNDERSAMPLING=1` el evolutivo
+pide ~300-350 GB (estimado, sin medir), y el dataset final con todas las columnas, ~180 GB más
+el final train. En una máquina de 256 GB, `EV_UNDERSAMPLING=0.2`: achica la muestra del
+LightGBM de la importancia, no corta fórmulas. Medir una generación antes de la cola entera.
 
-| | Meseta pública |
-|---|---|
-| E0A, promedio de las 3 corridas | 443,4 |
-| E2A, promedio de las 3 corridas | 441,1 |
-| ensamble de las 3 E0A (`ensamblar.R`) | 448,7 |
-| ensamble de las 3 E2A | 443,0 |
-| ensamble de las 6 | 446,6 |
+**HT_FIJO:** WF9600 se hizo sobre ~450 columnas (después de canaritos) y E5, E10, E11 y E12 ven
+1.500 a 4.500, lo que favorece a la base. Para comparar justo, una BO hecha sobre E5 y la misma
+en los cuatro.
 
-E0A contra E2A queda dentro del ruido del público. Lo que sí se ve es que la
-semilla mueve más que el brazo (12 a 18 M entre semillas del mismo brazo,
-2 o 3 M entre brazos) y que promediar semillas suma de 2 a 5 M y aplana la
-curva entre cortes.
+**Métrica:** la **meseta** de cada corrida (promedio de los 9 cortes de 8.000
+a 12.000 de `ganancia_202107.txt`, también en `ganancia_meseta.txt`),
+pareada por semilla, con **Wilcoxon de rangos con signo** y Holm sobre las 6
+comparaciones. El máximo de la curva (la métrica de la clase, última fila,
+en `ganancia_maximo.txt`) sale como secundaria: el PR 9 (`validacion/`)
+mostró que es optimista en 10–12 M y tiene unas 4 veces peor señal/ruido. Con n semillas el p más chico
+posible es 2/2^n: hacen falta al menos 6 (0,031); con 10, 0,002. Las 10 por
+defecto: 100213, 271211, 100313, 353161, 100613, 487757, 100913, 641371,
+101113 y 823541. Más semillas: `SEMILLAS="..."`.
+
+Lo que no se compara está fijo en todos los brazos: HT fija (`HT_FIJO`, la BO
+de WF9600; la importancia del evolutivo sale del LightGBM de canaritos), final
+train de 3 semillas con el 20% de los CONTINUA, sin mail y sin Kaggle. Ojo:
+esa BO se hizo con el dataset después de canaritos (~450 columnas); en E5–E8
+el modelo ve ~1.100–1.200.
+
+## Experimentos rápidos ("locos")
+
+Para probar una idea en minutos antes de gastar una cola entera, en el `.env`
+de un brazo nuevo:
+
+```
+EV_GENERACIONES=3
+FT_SEMILLAS_N=1
+```
+
+y `SEMILLAS="100213 271211 100313"`. Si algo se ve, recién ahí 10 semillas.
+
+## RAM
+
+El dataset del grupo B pesa ~50 GB en memoria. El evolutivo no lo agranda:
+la población queda fija en las columnas iniciales y cada original muerta se
+borra apenas la calcula la última fórmula que la usa. La cola anota la RAM
+usada cada minuto en `ram_<corrida>.tsv` y el máximo en `cola.log` y en
+`analisis.txt`. Igual conviene mirar `htop` en la primera corrida de cada
+brazo nuevo.
+
+## Antecedente: brazos v2 (2026-10-13)
+
+La genética de gramEvol (una fórmula ganadora por ronda) no le ganó a sortear
+fórmulas: E1 − E2 −1,58 M (gana 5 de 10, p 0,32), y el control dejó pasar 2
+de 30 rondas, lo que se espera por azar. Eso, más lo de la clase, es lo que
+llevó a la v3. Los resultados quedan en `exp/brazos_v2/analisis.txt`.
 
 ## Archivos
 
-- `E0.env` a `E4.env`: los brazos. Revisar `BUCKET_DIR`, `DATASET_PATH` y
-  `HT_FIJO`. E1, E2 y E4 fijan `GA_VENTANA=6`; E3 la deja vacía (todos los meses).
-- `E0A.env` y `E2A.env`: E0 y E2 en grupo A (WF9910 y WF9912), para Kaggle.
-  Los 9 cortes quedan en `kaggle/` de cada corrida, sin subir. Van por la
-  misma cola: `BRAZOS="E0A E2A"`.
+- `E0.env`, `E5.env` a `E9.env`: los brazos. Revisar `BUCKET_DIR`,
+  `DATASET_PATH` y `HT_FIJO`.
 - `correr_brazos.sh`: la cola, semillas × brazos. Corre todos los brazos de
   cada semilla seguidos (si se corta a mitad, lo terminado ya está pareado),
-  saltea lo que tiene `TERMINADO` y relanza lo que falló, que retoma desde sus
-  checkpoints.
-- `analizar_brazos.R`: la comparación pareada. Tabla por semilla, diferencias
-  con IC bootstrap de la media y Wilcoxon exacto, la genética ronda por ronda
-  (búsqueda, umbral de 2 desvíos, control, puesto en la importancia) y las
-  fórmulas al azar de E2.
+  saltea lo que tiene `TERMINADO` y relanza lo que falló, que retoma desde
+  sus checkpoints (el evolutivo, desde la última generación terminada).
+- `analizar_brazos.R`: Wilcoxon apareado sobre la meseta (principal) y el máximo, el
+  evolutivo generación por generación (población, originales vivas,
+  generadas, profundidad, % de importancia de las generadas, fórmulas
+  nacidas) y cuántas generadas usa el modelo final.
 
 ## Cómo correrlo
 
-En una VM con el bucket montado (no Spot: una corrida tarda horas y la cola,
-varios días), con el repo copiado en `/home/ds/buckets/b1/wf635v2`. La cola
-corre como `ds`, dueña del bucket: en las VM de la cátedra los demás usuarios
-no pueden leerlo, y `ds` no puede apagar la VM. Por eso se lanza desde un
-usuario con sudo, envuelta en un `bash -c` que apaga al terminar:
+En una VM con el bucket montado, con el repo copiado en
+`/home/ds/buckets/b1/wf635v3`. La cola corre como `ds`, dueña del bucket, y
+se lanza desde un usuario con sudo para que apague al terminar:
 
 ```bash
 cd /tmp
-nohup setsid bash -c 'sudo -u ds -H bash /home/ds/buckets/b1/wf635v2/brazos/correr_brazos.sh; sudo poweroff' > ~/cola_brazos.log 2>&1 < /dev/null &
+nohup setsid bash -c 'sudo -u ds -H bash /home/ds/buckets/b1/wf635v3/brazos/correr_brazos.sh; sudo poweroff' > ~/cola_brazos.log 2>&1 < /dev/null &
 ```
 
-Para una sola corrida de prueba, sin apagar:
+Una sola corrida de prueba, sin apagar:
 
 ```bash
 cd /tmp
-sudo -u ds -H env SEMILLAS=100213 BRAZOS=E0 bash /home/ds/buckets/b1/wf635v2/brazos/correr_brazos.sh
+sudo -u ds -H env SEMILLAS=100213 BRAZOS=E6 bash /home/ds/buckets/b1/wf635v3/brazos/correr_brazos.sh
 ```
 
-Todo queda en `exp/brazos_v2/`:
-
-- `cola.log`: avance de la cola.
-- `WF990x_s<semilla>.log`: el log de cada corrida.
-- `analisis.txt`: la comparación, que se actualiza después de cada corrida.
-- `brazos.csv`, `genetica.csv`, `tiempos.tsv`: los datos.
-
-Para frenar al terminar la corrida en curso:
-`touch /home/ds/buckets/b1/exp/brazos_v2/PARAR`.
-
-Opcionales de la cola (con `sudo -u ds -H env VAR=... bash ...`):
-`SEMILLAS="..."`, `BRAZOS="..."`, `REINTENTOS=1` y `BORRAR_CHECKPOINTS=1`
-(default: borra los `.fst` de `checkpoints/` de cada corrida terminada).
+Todo queda en `exp/brazos_v3/`: `cola.log`, `WF992x_s<semilla>.log`,
+`analisis.txt` (se actualiza después de cada corrida), `brazos.csv`,
+`evolutivo.csv`, `tiempos.tsv` y `ram_*.tsv`. Para frenar al terminar la
+corrida en curso: `touch /home/ds/buckets/b1/exp/brazos_v3/PARAR`.
