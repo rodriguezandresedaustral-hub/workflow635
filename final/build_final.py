@@ -28,7 +28,7 @@ replace(11, "PARAM$semilla_primigenia <- 102191", r'''
 PARAM <- list()
 PARAM$semilla_primigenia <- 100213
 
-PARAM$experimento <- 9700
+PARAM$experimento <- 9702
 PARAM$dataset <- "analistasr_competencia_2026.csv.gz"
 
 # "kaggle"   : grupo A, predice 202109 y sube a Kaggle
@@ -42,6 +42,28 @@ if (!(PARAM$modo %in% c("kaggle", "backtest"))) stop("PARAM$modo tiene que ser k
 # en backtest la carpeta es otra, para no mezclar con la corrida de Kaggle
 if (PARAM$modo == "backtest") PARAM$experimento <- PARAM$experimento + 1
 ''')
+
+# ---------------------------------------------------------------- kaggle al arrancar
+# en la VM no hay CLI de Kaggle ni kaggle.json: se preparan al principio y se
+#  prueban, asi un problema de Kaggle corta la corrida ahora y no a las 20 h
+inserts[13] = [code(r'''
+PARAM$kaggle$json <- "/home/ds/buckets/b1/kaggle/kaggle.json"
+
+if (PARAM$modo == "kaggle") {
+  Sys.setenv(PATH= paste0(Sys.getenv("HOME"), "/.local/bin:", Sys.getenv("PATH")))
+  dir.create("~/.kaggle", showWarnings= FALSE)
+  if (!file.exists("~/.kaggle/kaggle.json")) {
+    if (!file.exists(PARAM$kaggle$json)) stop("no existe ", PARAM$kaggle$json)
+    file.copy(PARAM$kaggle$json, "~/.kaggle/kaggle.json")
+    Sys.chmod("~/.kaggle/kaggle.json", mode= "0600")
+  }
+  if (Sys.which("kaggle") == "")
+    system("python3 -m pip install --user --break-system-packages kaggle")
+  prueba <- system("kaggle competitions submissions -c labo-1-ba-2026-analista-sr", intern= TRUE)
+  if (!is.null(attr(prueba, "status"))) stop("Kaggle no responde: ", paste(prueba, collapse= " "))
+  cat("Kaggle OK\n")
+}
+''')]
 
 # ---------------------------------------------------------------- CA y DR
 # sin cambios: ningun equipo 2026 midio alternativas en el dataset senior
@@ -192,19 +214,28 @@ if (PARAM$FE_rf$activar) {
 # ---------------------------------------------------------------- canaritos
 replace(67, "PARAM$CN$ratio <- 0.2", src(67).replace(
     "# Estos DOS parametros son los que se deben modificar",
-    "# Experimento colaborativo #7 (workflow 635, 12 semillas): sacar canaritos\n"
-    "#  suma +4,56 M, gana 12 de 12, Holm 0,003\n"
-    "PARAM$CN$run <- FALSE\n\n"
+    "# Prendido, como en el z635. El #7 (workflow 635, 12 semillas, BO fija) midio\n"
+    "#  +4,56 M al sacarlos, pero sin formulas ni ventana de 9 meses; otro equipo\n"
+    "#  midio -20 M al sacarlos con muchas columnas. Queda el default de la catedra\n"
+    "PARAM$CN$run <- TRUE\n\n"
     "# Estos DOS parametros son los que se deben modificar"))
 
 replace(68, "tb_importancia <- CanaritosAsesinos(", r'''
 # la llamada a Canaritos Asesinos
 if (PARAM$CN$run) {
+  # CanaritosAsesinos agrega columnas con := adentro de una funcion: reservo
+  #  el lugar antes, afuera, para que el borrado de columnas llegue al dataset
+  setalloccol(dataset, ncol(dataset) + ceiling(ncol(dataset) * PARAM$CN$ratio) + 100)
+  ncol_antes <- ncol(dataset)
+
   tb_importancia <- CanaritosAsesinos(
     canaritos_ratio = PARAM$CN$ratio,
     canaritos_desvios = PARAM$CN$desvios,
     canaritos_semilla = PARAM$semilla_primigenia
   )
+
+  if (ncol(dataset) >= ncol_antes) stop("canaritos no achico el dataset: ", ncol(dataset), " columnas")
+  cat("canaritos: de", ncol_antes, "a", ncol(dataset), "columnas\n")
 } else {
   cat("Sin canaritos\n")
 }
@@ -276,6 +307,72 @@ replace(103, "PARAM$FT$semillerio <- 10", r'''
 #  Cada modelo se graba en ./modelos: si se corta, retoma; con 20 ya se puede evaluar
 PARAM$FT$semillerio <- 30  # cantidad de semillas
 ''')
+
+replace(105, "PARAM$FT$semillas <- sample(primos)[seq(PARAM$FT$semillerio)]", r'''
+primos <- generate_primes(min = 100000, max = 1000000)
+set.seed(PARAM$semilla_primigenia, kind = "L'Ecuyer-CMRG")
+# 946919 se saca: en WF9701 su modelo llevaba 12,7 h contra 45 min de los
+#  otros, sin causa encontrada. Entra el primo siguiente del mismo sorteo
+PARAM$FT$semillas_excluidas <- c(946919)
+# me quedo con PARAM$semillerio  primos al azar
+PARAM$FT$semillas <- setdiff(sample(primos), PARAM$FT$semillas_excluidas)[seq(PARAM$FT$semillerio)]
+
+cat( PARAM$FT$semillas)
+''')
+
+# monitoreo: un proceso aparte graba cada 5 min CPU, RAM, modelos y en que
+#  funcion de LightGBM esta R; cada modelo loguea inicio, fin y la AUC en
+#  training cada 50 arboles (evaluar no cambia el modelo)
+inserts[105] = [code(r'''
+# monitoreo del final training: cada 5 minutos, en monitor.txt
+#  hora, CPU y RAM de R, modelos grabados, ultima linea de iteracion
+PARAM$FT$monitor_seg <- 300
+monitor_sh <- r"---(#!/bin/bash
+PID=__PID__; DIR="__DIR__"; LOCAL=$HOME/monitor___EXP__.txt
+while kill -0 $PID 2>/dev/null; do
+  {
+    echo "=== $(date -u +%FT%TZ)"
+    echo "R pcpu rss_kb etime: $(ps -o pcpu=,rss=,etime= -p $PID)"
+    echo "memoria libre GB: $(free -g | grep Mem: | tr -s ' ' | cut -d' ' -f7)"
+    echo "modelos: $(ls $DIR/modelos 2>/dev/null | wc -l)"
+    grep -h -e "train's auc" -e " modelo " $HOME/log_WF*.txt 2>/dev/null | tail -2
+  } >> $LOCAL
+  cp $LOCAL "$DIR/monitor.txt"
+  sleep __SEG__
+done
+)---"
+monitor_sh <- sub("__PID__", Sys.getpid(), monitor_sh, fixed= TRUE)
+monitor_sh <- sub("__DIR__", getwd(), monitor_sh, fixed= TRUE)
+monitor_sh <- sub("__EXP__", basename(getwd()), monitor_sh, fixed= TRUE)
+monitor_sh <- sub("__SEG__", PARAM$FT$monitor_seg, monitor_sh, fixed= TRUE)
+writeLines(monitor_sh, "monitor.sh")
+# system() con wait= FALSE ya agrega el "&" al final
+system("nohup bash monitor.sh > /dev/null 2>&1", wait= FALSE)
+''')]
+
+replace(106, "crear_modelo_final <- function( sem ) {", src(106).replace(
+    '''    set.seed(sem, kind = "L'Ecuyer-CMRG")
+    final_model <- lgb.train(
+      data= dfinal_train,
+      param= param_final,
+      verbose= -100
+    )
+''', '''    t0 <- Sys.time()
+    message(format(t0, "%Y-%m-%d %H:%M:%S"), "  modelo ", sem, " inicio")
+
+    set.seed(sem, kind = "L'Ecuyer-CMRG")
+    final_model <- lgb.train(
+      data= dfinal_train,
+      param= param_final,
+      valids= list(train= dfinal_train),
+      eval_freq= 50,
+      verbose= 1
+    )
+
+    message(format(Sys.time(), "%Y-%m-%d %H:%M:%S"), "  modelo ", sem, " fin  ",
+      round(as.numeric(difftime(Sys.time(), t0, units= "mins")), 1), " min")
+'''))
+assert "eval_freq= 50" in src(106), "no se aplico el monitoreo en crear_modelo_final"
 
 # ---------------------------------------------------------------- scoring
 replace(110, "PARAM$trainingstrategy$future <- c(202109)", r'''
@@ -497,7 +594,7 @@ Copia del `z635_WorkFlow_01_senior.ipynb` de la catedra con las decisiones de lo
 | FE intra-mes | + 30 formulas al azar, antes del FE historico | #7 |
 | FE historico | ventana 9, tendencia + ratioavg + ratiomax | #4 grupo B |
 | FE random forest | apagado | #6 grupo B |
-| Canaritos | apagado | #7 (workflow 635) |
+| Canaritos | prendidos (default del z635) | #7 y otro equipo se contradicen |
 | Final training | semillerio de 30 | — |
 | Scoring | se agrega el ensamble por promedio de rankings (no se sube) | #7 grupo B |
 | Evaluacion | ganancia real por modelo y del ensamble (solo backtest) | — |
