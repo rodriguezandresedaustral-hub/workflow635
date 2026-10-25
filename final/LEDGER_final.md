@@ -30,8 +30,10 @@ judged against seed noise.
 
 ## Current state
 
-Decisions written (table below). Notebook `635_WorkFlow_01_senior_final.ipynb`
-built. Not run on GCP yet. The two fixes from the smoke test are not executed.
+Backtest **WF9703** running on GCP (MIG wf635fin-b, 512 GB, relaunched
+2026-10-25 ~18:33 UTC), resuming WF9701's BO and 4 models. WF9701 stopped
+(stuck model 5). Kaggle run (now WF9702) not launched: waits for the backtest.
+Monitor: gs://rodriguezandresedaustral_bukito2026/exp/WF9703/monitor.txt
 
 ## Log
 
@@ -183,6 +185,96 @@ ensemble curve (where its plateau is), not from the public LB. Default 11.000;
 move it only if the backtest plateau clearly sits elsewhere, remembering
 202109 has ~18 % fewer bajas than 202107 (P7), so the 202109 optimum is lower
 than the 202107 one.
+
+2026-10-24 — PR rodriguezandresedaustral-hub/workflow635#15 opened
+(branch final-senior). User: "run". **Backtest launched on GCP** with the
+workflow635 launcher (`vm/lanzar.sh B`, unchanged startup/shutdown scripts):
+- Script: `635_workflow_senior.R` generated from the notebook by
+  `make_vm_script.py` (scratchpad): only paths /content → /home/ds/buckets/b1,
+  `PARAM$modo <- "backtest"`, and `file.create("TERMINADO")` at the end.
+- MIG `wf635fin-b`, template `wf635fin-b-f80eb012` (copy of to-256ram-12vcpu:
+  n2 custom 12 vCPU 256 GB, Spot, STOP on preemption, recreated by the group).
+- Uploaded to gs://rodriguezandresedaustral_bukito2026/wf635fin/B/
+  (script + .env with GRUPO=B, EXPERIMENTO=9701, mail settings).
+- Output: exp/WF9701/. Log: wf635fin/B/log_WF9701.txt.
+- Stop: `vm/parar.sh B` from the staging dir, or
+  `gcloud compute instance-groups managed resize wf635fin-b --zone northamerica-northeast2-b --size 0`.
+- After finishing (or R failing) the VM waits 30 min and resizes the group
+  to 0. Quota at launch: 0 of 12 vCPUs used; this group takes all 12.
+- If preempted: FE recomputed from scratch (no FE checkpoint in this
+  notebook); BO resumes from HT.RDATA; finished models in modelos/ are kept.
+
+2026-10-25 — WF9701: BO finished 02:43 UTC (50 evals, best AUC 0,9394;
+final params 1.023 trees, lr 0,012, ff 0,234). Models 1-4 saved at 03:29,
+04:18, 05:01, 05:44 (~45 min each). Model 5 (seed 946919) ran 12,7 h with
+no output. Measured on the VM: n2-custom-12-262144-ext, 247 GiB seen, R
+121 GB, 125 GB free, swap 0, no OOM in the kernel log, CPU 99 % user, steal
+0, no IO wait. Three gdb samples 15 s apart: main thread in different
+LightGBM tree-building functions (HistMove, HistMerge/ConstructHistograms,
+SplitInner) → progressing, not deadlocked. Cause of the 16× slowdown NOT
+found. A classmate reported that removing canaritos cost −20 M (10/10,
+p≈0,002), the opposite of P7's +4,56 M; setups unknown — open.
+
+2026-10-25 18:3x UTC — User: change the 5th seed, clear monitoring, and
+"push the machine to 512". Done:
+- 946919 excluded; the semillerío is the same sorted draw without it, so
+  models 1-4 are the same seeds and #30 is the next prime.
+- Each model logs start/end with minutes, and the AUC on training every 50
+  trees (`valids= train`, `eval_freq= 50`; evaluating does not change the
+  model). `monitor.sh` (started from R) writes `exp/WF9703/monitor.txt`
+  every 5 min: R CPU/RSS/elapsed, free RAM, model count, last iteration line,
+  LightGBM function of the main thread (gdb, if sudo works).
+- New folder per the user's rule: PARAM$experimento 9702 → backtest WF9703,
+  seeded with WF9701's HT.RDATA, BO_log.txt and the 4 models (mlrMBO
+  `mboContinue` source: finished state → "No need to continue", returns the
+  stored result). WF9701 group stopped (resized to 0).
+- Template to-512ram-12vcpu (n2 12 vCPU 512 GB, Spot). RAM was not the
+  measured cause; 512 rules it out.
+Estimate (from WF9701 timings, not measured on 512): ~10 min FE + matrix,
+26 models × ~45 min ≈ 19,5 h → end around 2026-10-26 14:00-15:00 UTC, if no
+model hangs again.
+
+2026-10-25 19:00 UTC — WF9703 check: VM wf635fin-b-w4qq
+(n2-custom-12-524288-ext). "FE historico completo: 229 campos x 3",
+1.835 columns, 59 GB; BO reused ("Tuning ended with term.iter. No need to
+continue"); model 202627 (5th) started 18:41. Two monitoring bugs found:
+- In-R `monitor.sh` never started: `system(..., wait=FALSE)` appends its own
+  `&` → `& &` syntax error. Also `ds` has no sudo, so the gdb part was useless.
+  Fixed in build_final.py for future runs (no `&`, no gdb). Not in WF9703.
+- LightGBM's "train's auc" lines go to stdout, which R buffers when writing
+  to a file: they appear in bursts. Model start/end lines (message → stderr)
+  appear at once and are the real signal.
+External monitor started by ssh as ds: /home/ds/monitor_wf.sh (copy in
+gs://…/wf635fin/B/monitor_wf.sh — NOTE gcsfuse on the VM runs with
+`--metadata-cache-ttl-secs=-1`, so bucket edits are not seen by the VM;
+edit the VM file directly). Every 5 min → exp/WF9703/monitor.txt: R pid,
+CPU, RAM, free memory, models saved, model in progress and its minutes.
+Mails (via the wf635 mail settings): if a model passes 90 min (once per
+model), and when R stops (TERMINADO → "termino", otherwise "R no esta
+corriendo"). Not started automatically if the VM is preempted and recreated.
+
+2026-10-25 ~19:20 UTC — User: deadline Tuesday; finish = Kaggle run.
+My mistake recorded: the user asked for a semillerío "to know if a run is
+good"; I turned that into a backtest-first plan without saying it would
+not upload, which cost ~a day. User then chose **canaritos ON** ("add it,
+launch and run, and it uploads to kaggle").
+- `PARAM$CN$run <- TRUE` (z635 default). Reason recorded in the cell: P7
+  +4,56 M off (fixed BO, no formulas, 6 m window) vs classmate −20 M off
+  (10/10, many columns). Unresolved; the user picked the cátedra default.
+- `setalloccol` before CanaritosAsesinos (same := inside a function risk)
+  + stop if the dataset did not shrink.
+- Kaggle setup cell at start (kaggle mode): copies
+  gs://…/kaggle/kaggle.json (uploaded 19:20 from lab_implementacion_01/misc)
+  to ~/.kaggle, installs the CLI with pip --user --break-system-packages if
+  missing, tests `kaggle competitions submissions`; stops if it fails.
+- In-R monitor fixed (no double `&`, no gdb).
+- WF9703 backtest stopped (group wf635fin-b resized to 0). It has the BO and
+  4 models; NOT reused (different timeline, and canaritos changes columns).
+- **Kaggle run WF9702 launched** ~19:22 UTC: MIG wf635fin-a, template
+  wf635fin-a-cda366d4 (512 GB, 12 vCPU, Spot), own BO, 30 models, uploads
+  cuts 9.000-13.000. Final pick: 11.000. Log wf635fin/A/log_WF9702.txt.
+- External monitor for A: launchA/monitor_wf.sh (EXP=WF9702, alert at 60 min)
+  — to start by ssh once R is running.
 
 ## Decisions (and why)
 
