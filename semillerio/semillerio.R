@@ -6,11 +6,12 @@
 #
 #   1. meses rotos a NA
 #   2. deflacion por IPC de las variables monetarias
-#   3. FE intra mes (ctrx normalizado, combinaciones Visa/Master)
-#   4. lags 1 y 2 con sus deltas, tendencia de 6 meses
-#   5. variables de hojas de un random forest
+#   3. FE intra mes (ctrx normalizado, combinaciones Visa/Master) y
+#      formulas al azar
+#   4. lags 1 y 2 con sus deltas, tendencia y ratios de VENTANA meses
+#   5. variables de hojas de un random forest (con RF=1)
 #   6. poda de variables con canaritos
-#   7. final train con pesos temporales y N semillas; la prediccion es el
+#   7. final train (pesos temporales con PESOS=1) y N semillas; la prediccion es el
 #      promedio de las N
 #
 # Todo se configura con variables de entorno:
@@ -23,6 +24,11 @@
 #   EXPERIMENTO  numero de experimento, la carpeta es exp/WF<EXPERIMENTO>
 #   LAGS         0 = saca los lags y deja solo los deltas (1)
 #   CANARITOS    0 = sin poda de canaritos (1)
+#   PESOS        1 = pesos temporales 0.5 -> 1.0 en el final train (0)
+#   VENTANA      meses de la tendencia del FE historico (9)
+#   RATIOS       1 = agrega ratioavg y ratiomax de la ventana (1)
+#   FORMULAS     cantidad de formulas al azar antes del FE historico (30)
+#   RF           1 = variables de hojas de random forest (0)
 #   THREADS      hilos de LightGBM (todos los nucleos)
 #   EXP_DIR      carpeta de experimentos (/home/ds/buckets/b1/exp)
 #   DATASET      dataset (/home/ds/datasets/analistasr_competencia_2026.csv.gz)
@@ -47,6 +53,11 @@ PARAM$modo <- env("MODO", "final")
 PARAM$experimento <- as.integer(env("EXPERIMENTO", PARAM$semilla_primigenia))
 PARAM$lags <- env("LAGS", "1") == "1"
 PARAM$canaritos <- env("CANARITOS", "1") == "1"
+PARAM$pesos <- env("PESOS", "0") == "1"
+PARAM$FE_hist$ventana <- as.integer(env("VENTANA", "9"))
+PARAM$FE_hist$ratios <- env("RATIOS", "1") == "1"
+PARAM$formulas <- as.integer(env("FORMULAS", "30"))
+PARAM$rf <- env("RF", "0") == "1"
 PARAM$threads <- as.integer(env("THREADS", parallel::detectCores()))
 PARAM$FT$semillerio <- as.integer(env("SEMILLERIO", "12"))
 PARAM$dataset <- env("DATASET", "/home/ds/datasets/analistasr_competencia_2026.csv.gz")
@@ -304,7 +315,54 @@ AgregarVariables_IntraMes(dataset)
 cat("columnas despues del FE intra mes:", ncol(dataset), "\n")
 
 # ---------------------------------------------------------------------------
-# FE historico: lags, deltas y tendencia de los ultimos 6 meses
+# Formulas al azar: v1 op v2 o (v1 op v2) op v3 con campos del mes. En el
+# experimento #7 sumar formulas sorteadas gano ~3 M (E2 - E0 +2,85 M, 16 de
+# 20 semillas) y buscarlas con un genetico no le gano al azar. Van antes del
+# FE historico, asi reciben lags, deltas y tendencia como cualquier campo
+# ---------------------------------------------------------------------------
+evaluar_formula <- function(formula, tabla) {
+  v <- tryCatch(eval(parse(text= formula)[[1]], envir= tabla), error= function(e) NULL)
+  if (is.null(v) || length(v) != nrow(tabla)) return(NULL)
+  v <- as.numeric(v)
+  v[is.infinite(v)] <- NA
+  v[is.nan(v)] <- 0
+  if (length(unique(v[!is.na(v)])) < 2) return(NULL)   # constante: no aporta
+  v
+}
+
+# distintas y no constantes en la muestra; usa su propia semilla y deja el
+# RNG de R como estaba
+sortear_formulas <- function(n, vars, semilla, muestra) {
+  rng <- if (exists(".Random.seed", envir= globalenv())) get(".Random.seed", envir= globalenv())
+  set.seed(semilla, kind= "L'Ecuyer-CMRG")
+  ops <- c(" + ", " - ", " * ", " / ")
+  f <- character(0)
+  intentos <- 0
+  while (length(f) < n && intentos < 100 * n) {
+    intentos <- intentos + 1
+    v <- sample(vars, 3, replace= TRUE)
+    o <- sample(ops, 2, replace= TRUE)
+    cand <- if (runif(1) < 0.5) paste0(v[1], o[1], v[2]) else paste0("(", v[1], o[1], v[2], ")", o[2], v[3])
+    if (!(cand %in% f) && !is.null(evaluar_formula(cand, muestra))) f <- c(f, cand)
+  }
+  if (!is.null(rng)) assign(".Random.seed", rng, envir= globalenv())
+  f
+}
+
+if (PARAM$formulas > 0) {
+  numericas <- names(dataset)[sapply(dataset, is.numeric)]
+  vars <- setdiff(numericas, c("numero_de_cliente", "foto_mes"))
+  formulas <- sortear_formulas(PARAM$formulas, vars, PARAM$semilla_primigenia,
+    dataset[foto_mes == 202101])   # mes de training, sin mirar la clase
+  tb_formulas <- data.table(nombre= sprintf("form_%02d", seq_along(formulas)), formula= formulas)
+  for (i in seq_len(nrow(tb_formulas)))
+    set(dataset, j= tb_formulas$nombre[i], value= evaluar_formula(tb_formulas$formula[i], dataset))
+  fwrite(tb_formulas, file= "formulas.txt", sep= "\t")
+  cat("formulas al azar:", nrow(tb_formulas), "\n")
+}
+
+# ---------------------------------------------------------------------------
+# FE historico: lags, deltas, tendencia y ratios de los ultimos VENTANA meses
 # ---------------------------------------------------------------------------
 
 # pendiente de cuadrados minimos, min, max y promedio de la ventana, en C++
@@ -437,10 +495,14 @@ for (vcol in cols_lagueables) {
 if (!PARAM$lags)
   dataset[, c(paste0(cols_lagueables, "_lag1"), paste0(cols_lagueables, "_lag2")) := NULL]
 
-PARAM$FE_hist$ventana <- 6
-
 cols_lagueables <- intersect(cols_lagueables, colnames(dataset))
 setorder(dataset, numero_de_cliente, foto_mes)
+
+# TendenciaYmuchomas agrega columnas con := a su argumento dataset: si el
+# data.table se queda sin lugares reservados para columnas, las nuevas quedan
+# en una copia local y se pierden sin error. Se reserva el lugar antes, afuera
+sufijos <- c("_tend", if (PARAM$FE_hist$ratios) c("_ratioavg", "_ratiomax"))
+setalloccol(dataset, ncol(dataset) + length(sufijos) * length(cols_lagueables) + 100)
 
 TendenciaYmuchomas(dataset,
   cols = cols_lagueables,
@@ -449,10 +511,14 @@ TendenciaYmuchomas(dataset,
   minimo = FALSE,
   maximo = FALSE,
   promedio = FALSE,
-  ratioavg = FALSE,
-  ratiomax = FALSE
+  ratioavg = PARAM$FE_hist$ratios,
+  ratiomax = PARAM$FE_hist$ratios
 )
 
+for (s in paste0(sufijos, PARAM$FE_hist$ventana)) {
+  faltan <- setdiff(paste0(cols_lagueables, s), colnames(dataset))
+  if (length(faltan)) stop("faltan ", length(faltan), " columnas ", s, " del FE historico")
+}
 cat("columnas despues del FE historico:", ncol(dataset), "\n")
 
 # ---------------------------------------------------------------------------
@@ -538,8 +604,12 @@ AgregaVarRandomForest <- function() {
   dataset[, clase01 := NULL]
 }
 
-AgregaVarRandomForest()
-cat("columnas despues del random forest:", ncol(dataset), "\n")
+# experimento #6 (grupo B): sin estas variables se gana lo mismo (p 0,557) y
+# la corrida es mas rapida
+if (PARAM$rf) {
+  AgregaVarRandomForest()
+  cat("columnas despues del random forest:", ncol(dataset), "\n")
+}
 
 # ---------------------------------------------------------------------------
 # Canaritos: se agregan columnas al azar, se entrena un LightGBM y se borra
@@ -698,10 +768,12 @@ mes_min <- min(dataset[fold_final_train == TRUE, mes_indice])
 mes_max <- max(dataset[fold_final_train == TRUE, mes_indice])
 dataset[, peso_temporal_final := 0.5 + 0.5 * (mes_indice - mes_min) / (mes_max - mes_min)]
 
+# PESOS=0 (default): sin pesos. En el experimento #4 (grupo A) esta misma
+# ponderacion 0.5 -> 1 perdio -9,9 M contra las estrategias lideres (Holm 0,029)
 dfinal_train <- lgb.Dataset(
   data = data.matrix(dataset[fold_final_train == TRUE, campos_buenos, with= FALSE]),
   label = dataset[fold_final_train == TRUE, clase01],
-  weight = dataset[fold_final_train == TRUE, peso_temporal_final],
+  weight = if (PARAM$pesos) dataset[fold_final_train == TRUE, peso_temporal_final] else NULL,
   free_raw_data = TRUE
 )
 
@@ -815,7 +887,10 @@ if (PARAM$modo == "final") {
       semilla = if (cp == "prob") "semillerio" else as.character(PARAM$FT$semillas[as.integer(sub("prob_", "", cp))]),
       gan_max = max(g),
       envios_max = which.max(g),
-      gan_meseta = mean(sort(g, decreasing= TRUE)[1:500])
+      gan_meseta = mean(sort(g, decreasing= TRUE)[1:500]),
+      # promedio de los cortes 8.000 a 12.000: la meseta de los experimentos
+      # #6 y #7 y del workflow 635, para comparar con esas corridas
+      gan_meseta_cortes = mean(g[cortes])
     )
     c(fila, as.list(setNames(g[cortes], paste0("gan_", cortes))))
   }))
