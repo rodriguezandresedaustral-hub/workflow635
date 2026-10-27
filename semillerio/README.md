@@ -35,7 +35,7 @@ Todo por variables de entorno (los defaults están en el encabezado del script):
 
 ```bash
 # final: entrena 201901-202107, predice 202109, deja los cortes en kaggle/
-SEMILLA=271211 SEMILLERIO=12 EXPERIMENTO=9921 Rscript semillerio/semillerio.R
+SEMILLA=353161 SEMILLERIO=12 EXPERIMENTO=9921 Rscript semillerio/semillerio.R
 
 # backtest: entrena hasta 202105, predice 202107 y graba ganancias_semillas.txt
 MODO=backtest SEMILLA=271211 SEMILLERIO=10 EXPERIMENTO=9907 Rscript semillerio/semillerio.R
@@ -52,12 +52,54 @@ sigue desde el último.
 Para juntar varias corridas:
 
 ```bash
-Rscript semillerio/ensamblar_semillas.R /home/ds/buckets/b1/exp/ENS_F4 \
+Rscript semillerio/ensamblar_semillas.R /home/ds/buckets/b1/exp/F4 \
   /home/ds/buckets/b1/exp/WF9905 /home/ds/buckets/b1/exp/WF9921 ...
 ```
 
 Promedia todas las `prob_<i>` juntas, así cada modelo pesa lo mismo (no cada
 corrida, como `ensamblar.R`).
+
+## Replicar la entrega final (KAF4)
+
+Son 10 corridas de `semillerio.R` en modo final, una por semilla, que solo
+cambian la semilla primigenia y la cantidad de modelos:
+
+| Experimento | Semilla | Modelos |
+|---|---|---|
+| 9905 | 271211 | 36 |
+| 9921 | 353161 | 12 |
+| 9922 | 487757 | 12 |
+| 9923 | 641371 | 12 |
+| 9924 | 823541 | 12 |
+| 9925 | 100213 | 12 |
+| 9926 | 100313 | 12 |
+| 9927 | 100613 | 12 |
+| 9928 | 100913 | 12 |
+| 9929 | 101113 | 12 |
+
+```bash
+cd workflow635
+export THREADS=32   # las corridas originales usaron 32 hilos
+
+SEMILLA=271211 SEMILLERIO=36 EXPERIMENTO=9905 Rscript semillerio/semillerio.R
+SEMILLA=353161 SEMILLERIO=12 EXPERIMENTO=9921 Rscript semillerio/semillerio.R
+SEMILLA=487757 SEMILLERIO=12 EXPERIMENTO=9922 Rscript semillerio/semillerio.R
+SEMILLA=641371 SEMILLERIO=12 EXPERIMENTO=9923 Rscript semillerio/semillerio.R
+SEMILLA=823541 SEMILLERIO=12 EXPERIMENTO=9924 Rscript semillerio/semillerio.R
+SEMILLA=100213 SEMILLERIO=12 EXPERIMENTO=9925 Rscript semillerio/semillerio.R
+SEMILLA=100313 SEMILLERIO=12 EXPERIMENTO=9926 Rscript semillerio/semillerio.R
+SEMILLA=100613 SEMILLERIO=12 EXPERIMENTO=9927 Rscript semillerio/semillerio.R
+SEMILLA=100913 SEMILLERIO=12 EXPERIMENTO=9928 Rscript semillerio/semillerio.R
+SEMILLA=101113 SEMILLERIO=12 EXPERIMENTO=9929 Rscript semillerio/semillerio.R
+
+E=/home/ds/buckets/b1/exp
+Rscript semillerio/ensamblar_semillas.R $E/F4 \
+  $E/WF9905 $E/WF9921 $E/WF9922 $E/WF9923 $E/WF9924 \
+  $E/WF9925 $E/WF9926 $E/WF9927 $E/WF9928 $E/WF9929
+```
+
+Las corridas son independientes, se pueden repartir en varias máquinas (cada
+una tarda varias horas). La entrega es `$E/F4/kaggle/KAF4_s144_10500.csv`.
 
 ## Backtest (predice 202107, 10 semillas)
 
