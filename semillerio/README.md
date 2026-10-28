@@ -8,6 +8,7 @@ semillas de los dos.
 |---|---|
 | Entrega final | `KAF4_s144_10500.csv`: 144 modelos, corte en 10.500 envíos |
 | Public | **457,331** (en 11.000: 455,164) |
+| Private | **479,000** (en 11.000: 486,357) |
 | Semillas | 271211 353161 487757 641371 823541 100213 100313 100613 100913 101113 |
 | Modelos | 271211 con 36, cada una de las otras 9 con 12 |
 
@@ -129,3 +130,13 @@ Las tres corridas usan las mismas 10 semillas, así que se comparan de a pares.
 KAF2 tiene semillas que no son las nuestras, por eso no la usamos. Entre KAF3
 y KAF4 la diferencia en el public es chica; nos quedamos con la de más
 modelos, que debería ser la más estable en el private.
+
+## Private y resto de los experimentos
+
+En el private KAF4 sacó 479,000, por debajo de KAF2 (483,036) y KAF3
+(484,536). El public no sirvió para elegir: sobre los 200 envíos del equipo la
+correlación entre public y private es casi nula.
+
+Los backtests con BO, las otras corridas finales, los ensambles y todos los
+envíos con su public y private están en
+[`validacion/resultados/experimentos_finales/`](../validacion/resultados/experimentos_finales/README.md).

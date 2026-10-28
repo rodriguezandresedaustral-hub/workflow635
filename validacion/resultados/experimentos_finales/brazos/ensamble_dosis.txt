@@ -1,0 +1,60 @@
+202107: 164479 clientes, 1304 BAJA+2
+
+Corridas por brazo: E0=20  E1=10  E2=20  E3=10  E4=10  E5=10  E6=20  E7=10  E8=10 
+Control: la meseta recalculada difiere de ganancia_meseta.txt en 0 como maximo
+
+Warning message:
+In prettyNum(r, big.mark = big.mark, big.interval = big.interval,  :
+  'big.mark' and 'decimal.mark' are both '.', which could be confusing
+Meseta del ensamble segun cuantas corridas se promedian (millones; media de subconjuntos al azar, [p10; p90]):
+  E0: K=1 583,19 [579,74; 586,13]  K=2 584,64 [581,52; 588,81]  K=3 585,11 [582,22; 588,33]  K=5 585,18 [583,11; 587,44]  K=10 585,05 [583,67; 586,33]  K=15 585,12 [584,32; 585,78]  K=20 584,78 [584,78; 584,78]
+  E1: K=1 584,41 [580,22; 588,12]  K=2 585,31 [581,87; 588,56]  K=3 585,67 [583,09; 588,12]  K=5 585,91 [583,89; 587,99]  K=10 586,56 [586,56; 586,56]
+  E2: K=1 586,04 [579,43; 590,36]  K=2 587,31 [583,67; 590,67]  K=3 587,94 [584,89; 590,90]  K=5 588,41 [586,21; 590,46]  K=10 588,69 [587,11; 590,22]  K=15 588,78 [587,78; 589,78]  K=20 588,89 [588,89; 588,89]
+  E3: K=1 582,83 [578,33; 587,37]  K=2 584,83 [581,58; 587,93]  K=3 585,42 [582,99; 587,57]  K=5 585,83 [584,22; 587,44]  K=10 585,67 [585,67; 585,67]
+  E4: K=1 585,81 [582,48; 588,19]  K=2 587,40 [584,91; 589,73]  K=3 587,84 [585,78; 589,68]  K=5 588,27 [586,89; 589,67]  K=10 589,11 [589,11; 589,11]
+  E5: K=1 581,36 [576,22; 585,53]  K=2 582,92 [579,69; 586,02]  K=3 583,19 [580,99; 586,02]  K=5 583,43 [581,78; 585,11]  K=10 583,44 [583,44; 583,44]
+  E6: K=1 586,59 [583,43; 590,72]  K=2 589,18 [584,86; 592,67]  K=3 589,89 [586,67; 593,00]  K=5 590,72 [588,44; 593,11]  K=10 591,36 [590,00; 592,78]  K=15 591,34 [590,44; 592,22]  K=20 591,00 [591,00; 591,00]
+  E7: K=1 585,87 [580,43; 589,57]  K=2 587,39 [582,73; 592,42]  K=3 587,75 [583,77; 591,58]  K=5 587,99 [585,33; 590,78]  K=10 587,89 [587,89; 587,89]
+  E8: K=1 586,06 [583,70; 589,48]  K=2 589,02 [586,09; 591,40]  K=3 590,08 [587,56; 592,12]  K=5 590,93 [589,22; 592,67]  K=10 591,67 [591,67; 591,67]
+
+E2 contra E0 con las mismas 20 semillas:
+  una corrida (promedio): E0 583,19  E2 586,04
+  ensamble de las 20: E0 584,78  E2 588,89  E0+E2 (40 corridas) 587,33
+  K=3 mismas semillas: E2 - E0 media 2,80, E2 gana en 87% de los sorteos
+  K=5 mismas semillas: E2 - E0 media 3,13, E2 gana en 97% de los sorteos
+  K=10 mismas semillas: E2 - E0 media 3,53, E2 gana en 100% de los sorteos
+  2 corridas: E0 y E2 de 1 semillas 585,72, 2 semillas de E0 584,69, 2 de E2 587,39
+  6 corridas: E0 y E2 de 3 semillas 587,17, 6 semillas de E0 585,33, 6 de E2 588,45
+  10 corridas: E0 y E2 de 5 semillas 587,27, 10 semillas de E0 585,11, 10 de E2 588,64
+
+E8 contra E6 con las mismas 10 semillas:
+  una corrida (promedio): E6 586,44  E8 586,06
+  ensamble de las 10: E6 590,56  E8 591,67  los dos juntos (20 corridas) 591,11
+  K=3 mismas semillas: E8 - E6 media 0,35, E8 gana en 53% de los sorteos
+  K=5 mismas semillas: E8 - E6 media 0,65, E8 gana en 66% de los sorteos
+
+E6 contra E2 con las mismas 20 semillas:
+  una corrida (promedio): E2 586,04  E6 586,59
+  ensamble de las 20: E2 588,89  E6 591,00  los dos juntos (40 corridas) 590,44
+  K=3 mismas semillas: E6 - E2 media 2,06, E6 gana en 80% de los sorteos
+  K=5 mismas semillas: E6 - E2 media 2,25, E6 gana en 89% de los sorteos
+  K=10 mismas semillas: E6 - E2 media 2,65, E6 gana en 99% de los sorteos
+
+Ensambles grandes (millones):
+  todas  120 corridas: prob 587,56  ranking 586,78  (una sola corrida, promedio 584,83)
+  E0     20 corridas: prob 584,78  ranking 583,22  (una sola corrida, promedio 583,19)
+  E1     10 corridas: prob 586,56  ranking 585,44  (una sola corrida, promedio 584,41)
+  E2     20 corridas: prob 588,89  ranking 587,89  (una sola corrida, promedio 586,04)
+  E3     10 corridas: prob 585,67  ranking 584,89  (una sola corrida, promedio 582,83)
+  E4     10 corridas: prob 589,11  ranking 587,33  (una sola corrida, promedio 585,81)
+  E5     10 corridas: prob 583,44  ranking 583,33  (una sola corrida, promedio 581,36)
+  E6     20 corridas: prob 591,00  ranking 589,22  (una sola corrida, promedio 586,59)
+  E7     10 corridas: prob 587,89  ranking 586,56  (una sola corrida, promedio 585,87)
+  E8     10 corridas: prob 591,67  ranking 589,89  (una sola corrida, promedio 586,06)
+
+Mezclar E2+E6+E7 (partes iguales) contra un solo brazo, a igual cantidad de corridas:
+  3 corridas: mezcla 589,15 [p10 585,22]  |  solo E2 587,67  solo E6 590,00  solo E7 587,90
+  6 corridas: mezcla 589,47 [p10 586,88]  |  solo E2 588,41  solo E6 590,76  solo E7 588,01
+  9 corridas: mezcla 589,40 [p10 587,32]  |  solo E2 588,79  solo E6 591,18  solo E7 587,75
+
+Ensamble de todas: maximo 600,60 en 12896 envios; en los cortes: 8000 580,00  8500 589,50  9000 589,00  9500 584,50  10000 587,00  10500 587,50  11000 589,00  11500 591,50  12000 590,00

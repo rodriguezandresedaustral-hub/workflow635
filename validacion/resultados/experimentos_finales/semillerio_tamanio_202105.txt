@@ -1,0 +1,55 @@
+Meseta (millones) por host, configuracion, iteracion y tamanio del semillerio k
+(k=1: promedio de los modelos sueltos; k=n: el semillerio con todos)
+
+Key: <host, cfg, iter, n>
+     host      cfg   iter     n     1     2     5    10    16    20    24    32
+   <char>   <char> <char> <int> <num> <num> <num> <num> <num> <num> <num> <num>
+1:    val      bag  p1023    32 250.3 253.4 255.5 256.0    NA 256.1    NA 256.4
+2:    val      bag   p512    32 250.8 254.7 256.6 257.4    NA 257.8    NA 258.2
+3:    val    bagff  p1023    32 250.1 252.2 253.6 253.9    NA 254.0    NA 254.8
+4:    val    bagff   p512    32 249.7 252.3 253.6 253.7    NA 253.8    NA 253.9
+5:    val baglargo  p1023    24 249.6 253.4 255.3 255.8    NA 256.1 255.8    NA
+6:    val baglargo  p1535    24 248.8 251.9 254.0 254.7    NA 255.1 255.0    NA
+7:    val baglargo  p2047    24 248.1 251.1 253.0 253.6    NA 254.0 254.7    NA
+8:    val     base  p1023    16 257.7 259.4 260.8 261.0 260.3    NA    NA    NA
+9:    val     base   p512    16 253.7 254.7 255.6 255.7 256.2    NA    NA    NA
+
+Desvio entre sorteos
+
+Key: <host, cfg, iter>
+     host      cfg   iter     1     2     5    10    20
+   <char>   <char> <char> <num> <num> <num> <num> <num>
+1:    val      bag  p1023  3.87  3.09  1.81  1.27  0.73
+2:    val      bag   p512  3.44  3.21  2.06  1.39  0.84
+3:    val    bagff  p1023  3.71  2.97  2.20  1.52  0.86
+4:    val    bagff   p512  4.12  3.07  1.99  1.22  0.75
+5:    val baglargo  p1023  3.46  2.68  1.54  0.94  0.50
+6:    val baglargo  p1535  3.70  2.83  1.80  1.08  0.49
+7:    val baglargo  p2047  3.63  3.03  1.81  1.09  0.51
+8:    val     base  p1023  2.60  1.89  1.25  0.71    NA
+9:    val     base   p512  3.19  2.22  1.28  0.80    NA
+
+Semillerio completo de cada configuracion: meseta y maximo de la curva
+
+                   id     n meseta maximo envios_max
+               <char> <int>  <num>  <num>      <num>
+1:     val|base|p1023    16 260.33 268.55       8458
+2:       val|bag|p512    32 258.22 265.92       7163
+3:      val|bag|p1023    32 256.44 267.05       6878
+4:      val|base|p512    16 256.22 264.15       9514
+5: val|baglargo|p1023    24 255.78 266.30       6628
+6: val|baglargo|p1535    24 255.00 267.10       6196
+7:    val|bagff|p1023    32 254.78 270.50       7500
+8: val|baglargo|p2047    24 254.67 267.48       6581
+9:     val|bagff|p512    32 253.89 267.42       6583
+
+Mezclas de a 2 (promedio de rangos, mismo host, ultima iteracion de cada config)
+
+     host                  a                  b meseta
+   <char>             <char>             <char>  <num>
+1:    val      val|bag|p1023     val|base|p1023 260.67
+2:    val val|baglargo|p2047     val|base|p1023 259.67
+3:    val    val|bagff|p1023     val|base|p1023 258.56
+4:    val      val|bag|p1023    val|bagff|p1023 255.78
+5:    val      val|bag|p1023 val|baglargo|p2047 255.22
+6:    val    val|bagff|p1023 val|baglargo|p2047 254.89

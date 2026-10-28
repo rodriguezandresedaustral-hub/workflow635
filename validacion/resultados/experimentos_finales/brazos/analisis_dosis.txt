@@ -1,0 +1,638 @@
+Brazos del workflow635 v2, grupo B (ganancia real en 202107)
+Generado: 2026-10-14 09:47 
+
+Corridas terminadas por brazo: E0=20  E1=10  E2=20  E3=10  E4=10  E5=10  E6=20  E7=10  E8=10 
+
+Meseta por semilla (millones):
+Key: <semilla>
+ semilla     E0     E1     E2     E3     E4     E5     E6     E7     E8
+   <num> <char> <char> <char> <char> <char> <char> <char> <char> <char>
+  100213 586,33 582,89 590,11 577,33 586,22 585,22 585,89 583,89 585,78
+  100313 581,44 580,33 587,67 581,56 585,44 576,44 587,44 587,00 589,22
+  100613 581,78 584,00 587,56 587,00 588,89 581,22 587,11 581,22 584,78
+  100913 580,00 584,33 579,44 580,78 586,67 588,33 578,33 588,33 578,00
+  101113 584,56 587,00 585,67 584,00 588,00 584,11 592,22 588,56 586,11
+  271211 580,67 584,11 584,00 583,22 579,78 577,78 586,11 580,89 585,22
+  353161 582,00 588,11 592,56 590,67 588,11 584,22 590,56 586,78 584,33
+  487757 585,44 585,89 582,78 584,11 582,78 581,44 584,00 598,67 587,33
+  641371 584,00 588,22 585,89 578,44 586,22 574,22 587,56 576,33 591,78
+  823541 580,67 579,22 584,22 581,22 586,00 580,56 585,22 587,00 588,00
+
+Promedio por brazo (millones): E0 582,69   E1 584,41   E2 585,99   E3 582,83   E4 585,81   E5 581,36   E6 586,44   E7 585,87   E8 586,06 
+Horas por corrida (mediana): E0 0,6   E1 1,3   E2 0,6   E3 0,8   E4 0,6   E5 0,5   E6 0,5   E7 0,6   E8 1,1 
+
+Diferencias pareadas por semilla (millones; IC 95% bootstrap de la media; Holm sobre 9 comparaciones):
+  E1 - E0: n=10  media 1,72  mediana 2,33  gana 7 de 10  IC [-0,09; 3,47]  p Wilcoxon 0,111  p Holm 0,668
+  E2 - E0: n=10  media 3,30  mediana 3,44  gana 8 de 10  IC [1,13; 5,57]  p Wilcoxon 0,020  p Holm 0,176  <- solo sin corregir
+  E1 - E2: n=10  media -1,58  mediana -1,72  gana 5 de 10  IC [-4,16; 1,06]  p Wilcoxon 0,322  p Holm 1,000
+  E3 - E0: n=10  media 0,14  mediana 0,33  gana 6 de 10  IC [-2,87; 3,08]  p Wilcoxon 0,922  p Holm 1,000
+  E3 - E2: n=10  media -3,16  mediana -1,78  gana 2 de 10  IC [-5,94; -0,77]  p Wilcoxon 0,037  p Holm 0,297  <- solo sin corregir
+  E3 - E1: n=10  media -1,58  mediana -1,33  gana 4 de 10  IC [-4,06; 0,64]  p Wilcoxon 0,334  p Holm 1,000
+  E4 - E0: n=10  media 3,12  mediana 3,72  gana 7 de 10  IC [1,02; 5,03]  p Wilcoxon 0,037  p Holm 0,297  <- solo sin corregir
+  E4 - E2: n=10  media -0,18  mediana 0,17  gana 5 de 10  IC [-2,22; 2,03]  p Wilcoxon 0,883  p Holm 1,000
+  E4 - E1: n=10  media 1,40  mediana 1,67  gana 6 de 10  IC [-0,82; 3,53]  p Wilcoxon 0,254  p Holm 1,000
+  (E1-E0: lo que aporta la genetica; E2-E0: agregar 3 formulas cualquiera; E1-E2: lo que aporta BUSCAR la formula; E3-E1: entrenar el fitness con todos los meses en vez de 6; E4-E1: buscar en el mes de la BO en vez de 202101)
+
+Dosis de formulas al azar (Holm sobre 6 comparaciones):
+  E5 - E0: n=10  media -1,33  mediana -0,83  gana 2 de 10  IC [-4,04; 1,54]  p Wilcoxon 0,193  p Holm 0,641
+  E6 - E0: n=10  media 3,76  mediana 4,94  gana 7 de 10  IC [1,50; 5,84]  p Wilcoxon 0,027  p Holm 0,164  <- solo sin corregir
+  E7 - E0: n=10  media 3,18  mediana 4,39  gana 7 de 10  IC [-0,33; 6,61]  p Wilcoxon 0,160  p Holm 0,641
+  E5 - E2: n=10  media -4,63  mediana -5,56  gana 1 de 10  IC [-7,80; -0,92]  p Wilcoxon 0,049  p Holm 0,244  <- solo sin corregir
+  E6 - E2: n=10  media 0,46  mediana 0,39  gana 5 de 10  IC [-1,16; 2,21]  p Wilcoxon 0,695  p Holm 1,000
+  E7 - E2: n=10  media -0,12  mediana -1,89  gana 4 de 10  IC [-4,42; 4,84]  p Wilcoxon 0,695  p Holm 1,000
+  (E5, E6 y E7: 10, 30 y 100 formulas; E2: 3. Las primeras formulas de cada brazo son las mismas) 
+
+Dosis-respuesta: Spearman entre cantidad de formulas y meseta, por semilla (E0 E2 E5 E6 E7): mediana 0,253, positiva en 7 de 10
+
+Final train con todos los CONTINUA (E8) (Holm sobre 1 comparaciones):
+  E8 - E6: n=10  media -0,39  mediana -0,22  gana 4 de 10  IC [-2,64; 1,67]  p Wilcoxon 0,846  p Holm 0,846
+  (E8: E6 con FT_UNDERSAMPLING=1; la BO de HT_FIJO entreno con el 20%. Una sola comparacion fijada antes de correr) 
+
+Confirmacion de E2-E0 con 10 semillas nuevas (millones):
+Key: <semilla>
+ semilla     E0     E2
+   <num> <char> <char>
+  187223 581,67 585,89
+  272507 585,00 589,33
+  294023 579,78 589,44
+  336239 598,22 593,00
+  436693 586,11 579,11
+  512959 583,44 586,11
+  683323 580,00 585,44
+  696929 579,44 583,67
+  784841 577,44 579,33
+  842879 585,78 589,56
+Una sola comparacion fijada antes de correr, sin correccion:
+  E2 - E0: n=10  media 2,40  mediana 4,00  gana 8 de 10  IC [-0,63; 5,12]  p Wilcoxon 0,275
+Con las 20 semillas juntas (informativo):
+  E2 - E0: n=20  media 2,85  mediana 3,67  gana 16 de 20  IC [0,91; 4,65]  p Wilcoxon 0,010  <- distinta de 0
+
+Confirmacion de E6-E2 con 10 semillas nuevas, una sola comparacion fijada antes de correr:
+  E6 - E2: n=10  media 0,66  mediana 1,56  gana 5 de 10  IC [-1,68; 2,96]  p Wilcoxon 0,475
+Con todas las semillas juntas (informativo):
+  E6 - E2: n=20  media 0,56  mediana 0,39  gana 10 de 20  IC [-0,89; 1,99]  p Wilcoxon 0,492
+  E6 - E0: n=20  media 3,41  mediana 4,94  gana 13 de 20  IC [1,14; 5,46]  p Wilcoxon 0,013  <- distinta de 0
+
+Genetica (E1, fitness con 6 meses), una fila por ronda: la busqueda mide en 202101, el control en 202103
+ semilla ronda
+   <num> <int>
+  100213     1
+  100213     2
+  100213     3
+  100313     1
+  100313     2
+  100313     3
+  100613     1
+  100613     2
+  100613     3
+  100913     1
+  100913     2
+  100913     3
+  101113     1
+  101113     2
+  101113     3
+  271211     1
+  271211     2
+  271211     3
+  353161     1
+  353161     2
+  353161     3
+  487757     1
+  487757     2
+  487757     3
+  641371     1
+  641371     2
+  641371     3
+  823541     1
+  823541     2
+  823541     3
+ semilla ronda
+   <num> <int>
+                                                                    formula
+                                                                     <char>
+             (vm_mconsumosdolares * mtransferencias_emitidas) - tcallcenter
+                      (vm_mconsumototal * vmr_mconsumospesos) * cinversion1
+                         (minversion2 - vm_status03) + vmr_madelantodolares
+ (Master_fultimo_cierre - mcheques_depositados) * mtransferencias_recibidas
+                                             Visa_mconsumospesos + tcuentas
+                (vm_madelantodolares * tmobile_app) * mprestamos_personales
+             (vm_mfinanciacion_limite + cseguro_vivienda) * vmr_mpagominimo
+             (Visa_fultimo_cierre * mcaja_ahorro_dolares)/minversion1_pesos
+                                            Visa_Fvencimiento/cpayroll2_trx
+                              cprestamos_personales + mprestamos_personales
+                             (vmr_mconsumototal * mforex_buy) * minversion2
+                                                     ccaja_ahorro/mpayroll2
+                       (mforex_sell + mcuentas_saldo) + Visa_mconsumospesos
+          (ctarjeta_master_descuentos - ctarjeta_visa) * Master_mpagominimo
+                             mtarjeta_visa_consumo + mcaja_ahorro_adicional
+                                vmr_Master_mlimitecompra + cpagodeservicios
+    (ctarjeta_visa_debitos_automaticos * mprestamos_prendarios) * mpayroll2
+                                   vm_cadelantosefectivo * mpagodeservicios
+                    ccheques_depositados_rechazados - cprestamos_personales
+        (ccajas_consultas - mcuenta_debitos_automaticos)/Master_msaldopesos
+                  ctarjeta_visa_debitos_automaticos - mprestamos_personales
+                             (matm/mplazo_fijo_dolares)/Visa_fultimo_cierre
+                                  tcallcenter + mcajeros_propios_descuentos
+                                             cforex_buy * minversion1_pesos
+                          (cprestamos_prendarios + tcuentas) + vm_fechaalta
+                                   cliente_antiguedad/mtarjeta_visa_consumo
+                      (mpagomiscuentas/Master_fultimo_cierre) + vmr_mpagado
+                                    Master_mpagospesos/vmr_mconsumosdolares
+                                 vmr_madelantodolares * vm_mconsumosdolares
+                          (ccaja_ahorro/mcuenta_corriente)/Visa_msaldopesos
+                                                                    formula
+                                                                     <char>
+   busqueda umbral_2sd pasa_2sd     control puesto pasa_control    impo
+     <char>     <char>   <lgcl>      <char> <char>       <lgcl>  <char>
+ 12.303.100  5.021.377     TRUE    -690.200  19/20        FALSE  NA/431
+  3.283.300  5.021.377    FALSE   4.673.400   3/20        FALSE  NA/431
+  1.987.250  5.021.377    FALSE  -1.079.500  11/20        FALSE 392/431
+  8.987.450  4.054.621     TRUE   3.471.600   4/20        FALSE 210/420
+  5.861.450  4.054.621     TRUE  -1.121.250   2/20        FALSE 196/420
+          0  4.054.621    FALSE           0   4/20        FALSE  NA/420
+  7.488.600  5.184.405     TRUE  -1.081.250  10/20        FALSE 189/297
+  1.716.000  5.184.405    FALSE   3.130.800   6/20        FALSE  NA/297
+          0  5.184.405    FALSE           0  14/20        FALSE  NA/297
+ 21.084.150  3.282.327     TRUE   2.333.800   9/20        FALSE 243/417
+          0  3.282.327    FALSE           0   4/20        FALSE  NA/417
+          0  3.282.327    FALSE           0   6/20        FALSE  NA/417
+  9.351.800  6.026.971     TRUE     884.650   5/20        FALSE  39/529
+  1.574.450  6.026.971    FALSE   3.551.300   2/20        FALSE 296/529
+  4.953.450  6.026.971    FALSE  -4.630.550   4/20        FALSE  42/529
+ 10.022.100  7.843.964     TRUE     785.700  12/20        FALSE 221/499
+          0  7.843.964    FALSE           0   5/20        FALSE  NA/499
+          0  7.843.964    FALSE           0   7/20        FALSE  NA/499
+ 13.223.200  3.596.326     TRUE -15.127.200  15/20        FALSE  NA/475
+ -1.759.150  3.596.326    FALSE  16.376.250   1/20         TRUE 332/475
+  2.814.000  3.596.326    FALSE -10.599.600  19/20        FALSE  26/475
+ 11.954.100 12.066.356    FALSE     -15.950   7/20        FALSE  NA/404
+    734.050 12.066.356    FALSE  12.003.350   1/20         TRUE  NA/404
+          0 12.066.356    FALSE           0   1/20        FALSE  NA/404
+ 18.840.000 10.023.551     TRUE   1.747.900   9/20        FALSE  NA/547
+  4.402.250 10.023.551    FALSE  -1.552.850  20/20        FALSE  79/547
+  1.060.050 10.023.551    FALSE   1.304.100  19/20        FALSE 250/547
+  2.082.200  6.808.577    FALSE    -730.050  10/20        FALSE  NA/370
+          0  6.808.577    FALSE           0  20/20        FALSE  NA/370
+    518.700  6.808.577    FALSE   5.557.100   9/20        FALSE 125/370
+   busqueda umbral_2sd pasa_2sd     control puesto pasa_control    impo
+     <char>     <char>   <lgcl>      <char> <char>       <lgcl>  <char>
+
+Rondas que pasan el umbral de 2 desvios (regla de Andres): 9 de 30
+Rondas que pasan el control (puesto 1 de 20 y mejora > 0): 2 de 30 (si la genetica no aporta nada, se esperan 1,5)
+Mejora en el control de las ganadoras: mediana 0, positiva en 12 de 30
+Ninguna formula gano en mas de una semilla.
+
+E1-E0 segun cuantas rondas pasaron el control en esa semilla:
+ semilla pasan    dif
+   <num> <int> <char>
+  353161     1   6,11
+  487757     1   0,44
+  100213     0  -3,44
+  100313     0  -1,11
+  100613     0   2,22
+  100913     0   4,33
+  101113     0   2,44
+  271211     0   3,44
+  641371     0   4,22
+  823541     0  -1,44
+
+Genetica (E3, fitness con todos los meses), una fila por ronda: la busqueda mide en 202101, el control en 202103
+ semilla ronda
+   <num> <int>
+  100213     1
+  100213     2
+  100213     3
+  100313     1
+  100313     2
+  100313     3
+  100613     1
+  100613     2
+  100613     3
+  100913     1
+  100913     2
+  100913     3
+  101113     1
+  101113     2
+  101113     3
+  271211     1
+  271211     2
+  271211     3
+  353161     1
+  353161     2
+  353161     3
+  487757     1
+  487757     2
+  487757     3
+  641371     1
+  641371     2
+  641371     3
+  823541     1
+  823541     2
+  823541     3
+ semilla ronda
+   <num> <int>
+                                                               formula
+                                                                <char>
+                                           internet + vm_msaldodolares
+                                Master_Finiciomora/Visa_madelantopesos
+         (catm_trx_other + cprestamos_personales) - Visa_mlimitecompra
+                                            vm_status04 + mcaja_ahorro
+ (mcheques_depositados_rechazados/mautoservicio) - Visa_mconsumospesos
+                                 ccaja_ahorro/mtransferencias_emitidas
+                                  ctrx_quarter_normalizado/vm_status03
+         (Master_delinquency * Visa_cadelantosefectivo) - ctrx_quarter
+                           vm_madelantopesos * cprestamos_hipotecarios
+                   ctrx_quarter - mttarjeta_master_debitos_automaticos
+                                 cprestamos_hipotecarios * cliente_vip
+                  ctarjeta_visa_transacciones/cdescubierto_preacordado
+                                 vmr_msaldodolares2 + vm_mconsumototal
+                            Visa_Finiciomora * cprestamos_hipotecarios
+                         cprestamos_hipotecarios * vm_madelantodolares
+                                            mautoservicio/mcaja_ahorro
+                               ccaja_ahorro * vmr_Master_mlimitecompra
+                           cpagodeservicios + ctrx_quarter_normalizado
+                   (Master_mlimitecompra/cforex_buy) + ctarjeta_master
+              (Visa_mconsumosdolares + tcallcenter)/Master_msaldopesos
+            (ctrx_quarter - mcaja_ahorro) + chomebanking_transacciones
+                                    mpagodeservicios + mpasivos_margen
+                           cliente_vip - cseguro_accidentes_personales
+                                     vmr_msaldodolares * cpayroll2_trx
+                          vm_msaldodolares + mcomisiones_mantenimiento
+   (mcaja_ahorro_adicional - mtarjeta_visa_consumo)/Visa_msaldodolares
+       (mprestamos_prendarios + mcaja_ahorro_dolares)/vm_mpagosdolares
+                                vm_msaldototal - Master_mconsumospesos
+                                          cforex * vm_madelantodolares
+                  (mcheques_depositados - cliente_edad) + vm_fechaalta
+                                                               formula
+                                                                <char>
+    busqueda umbral_2sd pasa_2sd     control puesto pasa_control    impo
+      <char>     <char>   <lgcl>      <char> <char>       <lgcl>  <char>
+  12.125.950  4.541.361     TRUE  -3.423.750   4/20        FALSE  NA/488
+           0  4.541.361    FALSE           0   2/20        FALSE  NA/488
+  -1.479.450  4.541.361    FALSE  -5.816.200  17/20        FALSE  96/488
+   6.461.300  6.198.563     TRUE  -6.919.400  18/20        FALSE  12/449
+  -6.334.850  6.198.563    FALSE   7.200.400  12/20        FALSE 291/449
+   3.600.150  6.198.563    FALSE  -2.646.850   6/20        FALSE 173/449
+   9.064.400  4.079.210     TRUE  -4.226.700   6/20        FALSE 155/469
+     272.150  4.079.210    FALSE   1.078.800   1/20         TRUE 176/469
+           0  4.079.210    FALSE           0  15/20        FALSE  NA/469
+  12.404.700  1.832.367     TRUE  -2.707.400  14/20        FALSE 215/326
+           0  1.832.367    FALSE           0  20/20        FALSE  NA/326
+ -10.491.750  1.832.367    FALSE  13.411.450  14/20        FALSE  16/326
+  15.787.150  4.168.164     TRUE   1.096.500   3/20        FALSE  NA/536
+  -2.565.450  4.168.164    FALSE  -2.551.800  11/20        FALSE  NA/536
+           0  4.168.164    FALSE           0   4/20        FALSE  NA/536
+  10.359.100  6.720.134     TRUE  -7.937.300   8/20        FALSE  NA/515
+   2.228.750  6.720.134    FALSE   5.536.900   5/20        FALSE 134/515
+   4.384.000  6.720.134    FALSE  -2.325.500   5/20        FALSE   5/515
+  16.376.300  3.509.536     TRUE  -7.487.550  10/20        FALSE  NA/527
+ -12.059.150  3.509.536    FALSE  12.046.850   1/20         TRUE 350/527
+   4.421.550  3.509.536     TRUE -12.040.950  19/20        FALSE  46/527
+  11.374.900  7.263.829     TRUE   2.811.200  13/20        FALSE  61/464
+   3.237.100  7.263.829    FALSE  -3.876.950   9/20        FALSE  NA/464
+           0  7.263.829    FALSE           0   8/20        FALSE  NA/464
+  17.168.350  3.268.674     TRUE  -2.740.950   1/20        FALSE 203/394
+  -4.204.600  3.268.674    FALSE  -4.915.850  19/20        FALSE 156/394
+   1.894.450  3.268.674    FALSE   4.311.900  10/20        FALSE  NA/394
+  15.889.250  8.982.283     TRUE   1.934.200  13/20        FALSE 273/520
+           0  8.982.283    FALSE           0  12/20        FALSE  NA/520
+  -5.660.650  8.982.283    FALSE   5.805.750   1/20         TRUE 125/520
+    busqueda umbral_2sd pasa_2sd     control puesto pasa_control    impo
+      <char>     <char>   <lgcl>      <char> <char>       <lgcl>  <char>
+
+Rondas que pasan el umbral de 2 desvios (regla de Andres): 11 de 30
+Rondas que pasan el control (puesto 1 de 20 y mejora > 0): 3 de 30 (si la genetica no aporta nada, se esperan 1,5)
+Mejora en el control de las ganadoras: mediana 0, positiva en 10 de 30
+Ninguna formula gano en mas de una semilla.
+
+E3-E0 segun cuantas rondas pasaron el control en esa semilla:
+ semilla pasan    dif
+   <num> <int> <char>
+  100613     1   5,22
+  353161     1   8,67
+  823541     1   0,56
+  100213     0  -9,00
+  100313     0   0,11
+  100913     0   0,78
+  101113     0  -0,56
+  271211     0   2,56
+  487757     0  -1,33
+  641371     0  -5,56
+
+Genetica (E4, fitness con 6 meses), una fila por ronda: la busqueda mide en 202105, el control en 202103
+ semilla ronda
+   <num> <int>
+  100213     1
+  100213     2
+  100213     3
+  100313     1
+  100313     2
+  100313     3
+  100613     1
+  100613     2
+  100613     3
+  100913     1
+  100913     2
+  100913     3
+  101113     1
+  101113     2
+  101113     3
+  271211     1
+  271211     2
+  271211     3
+  353161     1
+  353161     2
+  353161     3
+  487757     1
+  487757     2
+  487757     3
+  641371     1
+  641371     2
+  641371     3
+  823541     1
+  823541     2
+  823541     3
+ semilla ronda
+   <num> <int>
+                                                               formula
+                                                                <char>
+ (vm_status02 + mtransferencias_emitidas)/ccheques_emitidos_rechazados
+                     (vmr_mpagado - vm_status05) * minversion1_dolares
+                                              mpayroll2/vm_msaldopesos
+                                               vm_status06/mcomisiones
+                                           ccaja_ahorro * vm_cconsumos
+                           mcheques_emitidos_rechazados * cseguro_auto
+            (kmes - ctarjeta_visa_debitos_automaticos) * ctarjeta_visa
+                                    kmes + ctarjeta_visa_transacciones
+                                  Visa_fechaalta/Visa_madelantodolares
+                                    Visa_mlimitecompra - Master_status
+                         (mpayroll2 - ccaja_ahorro)/cliente_antiguedad
+                                                ccaja_ahorro/mpayroll2
+                                 mactivos_margen * mpayroll_sobre_edad
+                          mcheques_depositados_rechazados * cforex_buy
+                         cprestamos_hipotecarios * vm_madelantodolares
+           (mtarjeta_visa_descuentos + minversion2) - Visa_msaldototal
+         (vmr_msaldodolares - vmr_mconsumototal) + ccajas_extracciones
+                          vm_cadelantosefectivo * ccajas_transacciones
+                                  mpagomiscuentas * vmr_mconsumospesos
+         (mcuentas_saldo * mcheques_emitidos_rechazados) * vm_status03
+                                   ctrx_quarter * vmr_madelantodolares
+                       (cproductos + internet) + cprestamos_prendarios
+                                        minversion2 * cpagodeservicios
+                           (mv_status07 * internet) * ccajas_depositos
+                                          vm_Finiciomora + vm_status04
+     (ctarjeta_master_descuentos * Master_mpagado) + vmr_msaldodolares
+                                               cforex_buy * matm_other
+                              ctarjeta_master_transacciones/cproductos
+                          vm_mconsumototal/ccuenta_debitos_automaticos
+             (Visa_mpagado * Visa_mlimitecompra)/cprestamos_personales
+                                                               formula
+                                                                <char>
+   busqueda umbral_2sd pasa_2sd     control puesto pasa_control    impo
+     <char>     <char>   <lgcl>      <char> <char>       <lgcl>  <char>
+  9.309.150  5.986.340     TRUE   5.557.400   3/20        FALSE 497/526
+          0  5.986.340    FALSE           0   2/20        FALSE  NA/526
+          0  5.986.340    FALSE           0   2/20        FALSE  NA/526
+  9.488.950 13.057.878    FALSE   1.785.450   9/20        FALSE  NA/544
+  1.129.150 13.057.878    FALSE   3.055.500   1/20         TRUE 384/544
+          0 13.057.878    FALSE           0   1/20        FALSE  NA/544
+ 10.734.600  6.018.236     TRUE     204.600   6/20        FALSE  93/460
+  2.590.700  6.018.236    FALSE  -2.309.650  13/20        FALSE 112/460
+          0  6.018.236    FALSE           0  15/20        FALSE  NA/460
+ 14.114.000  8.783.478     TRUE   1.697.300  10/20        FALSE  84/534
+    947.600  8.783.478    FALSE  -8.917.150  20/20        FALSE 119/534
+          0  8.783.478    FALSE           0  12/20        FALSE  NA/534
+ 15.458.850 13.903.621     TRUE  -2.426.600  11/20        FALSE  NA/567
+          0 13.903.621    FALSE           0  14/20        FALSE  NA/567
+          0 13.903.621    FALSE           0  15/20        FALSE  NA/567
+ 12.464.250 13.359.765    FALSE  -2.048.800  19/20        FALSE 144/277
+  9.551.250 13.359.765    FALSE  -4.039.450  18/20        FALSE  NA/277
+          0 13.359.765    FALSE           0  16/20        FALSE  NA/277
+ 10.582.700  6.309.920     TRUE -12.679.800  12/20        FALSE  NA/455
+          0  6.309.920    FALSE           0  18/20        FALSE  NA/455
+          0  6.309.920    FALSE           0  19/20        FALSE  NA/455
+  8.195.500  4.114.809     TRUE  -3.314.800  15/20        FALSE  28/521
+          0  4.114.809    FALSE           0  19/20        FALSE  NA/521
+          0  4.114.809    FALSE           0  17/20        FALSE  NA/521
+ 15.121.350  5.318.526     TRUE  -5.149.050  20/20        FALSE  NA/425
+  6.313.300  5.318.526     TRUE   8.969.350  15/20        FALSE  NA/425
+          0  5.318.526    FALSE           0  17/20        FALSE  NA/425
+ 11.065.800  7.041.238     TRUE     325.150   6/20        FALSE  NA/417
+  1.520.550  7.041.238    FALSE   8.868.050   1/20         TRUE 187/417
+  3.299.750  7.041.238    FALSE  -3.276.450   7/20        FALSE  NA/417
+   busqueda umbral_2sd pasa_2sd     control puesto pasa_control    impo
+     <char>     <char>   <lgcl>      <char> <char>       <lgcl>  <char>
+
+Rondas que pasan el umbral de 2 desvios (regla de Andres): 9 de 30
+Rondas que pasan el control (puesto 1 de 20 y mejora > 0): 2 de 30 (si la genetica no aporta nada, se esperan 1,5)
+Mejora en el control de las ganadoras: mediana 0, positiva en 8 de 30
+Ninguna formula gano en mas de una semilla.
+
+E4-E0 segun cuantas rondas pasaron el control en esa semilla:
+ semilla pasan    dif
+   <num> <int> <char>
+  100313     1   4,00
+  823541     1   5,33
+  100213     0  -0,11
+  100613     0   7,11
+  100913     0   6,67
+  101113     0   3,44
+  271211     0  -0,89
+  353161     0   6,11
+  487757     0  -2,67
+  641371     0   2,22
+
+
+Formulas al azar (E2):
+ semilla ronda
+   <num> <int>
+  100213     1
+  100213     2
+  100213     3
+  100313     1
+  100313     2
+  100313     3
+  100613     1
+  100613     2
+  100613     3
+  100913     1
+  100913     2
+  100913     3
+  101113     1
+  101113     2
+  101113     3
+  187223     1
+  187223     2
+  187223     3
+  271211     1
+  271211     2
+  271211     3
+  272507     1
+  272507     2
+  272507     3
+  294023     1
+  294023     2
+  294023     3
+  336239     1
+  336239     2
+  336239     3
+  353161     1
+  353161     2
+  353161     3
+  436693     1
+  436693     2
+  436693     3
+  487757     1
+  487757     2
+  487757     3
+  512959     1
+  512959     2
+  512959     3
+  641371     1
+  641371     2
+  641371     3
+  683323     1
+  683323     2
+  683323     3
+  696929     1
+  696929     2
+  696929     3
+  784841     1
+  784841     2
+  784841     3
+  823541     1
+  823541     2
+  823541     3
+  842879     1
+  842879     2
+  842879     3
+ semilla ronda
+   <num> <int>
+                                                                               formula
+                                                                                <char>
+                                           mplazo_fijo_pesos + Master_mconsumosdolares
+                          (vmr_mconsumospesos * cliente_antiguedad) + mpagodeservicios
+                          (ctarjeta_master_descuentos - cinversion2) - vmr_mpagospesos
+                                                     cproductos * vmr_mconsumosdolares
+                                                      ccajas_depositos * mautoservicio
+                                (ctrx_quarter - vm_madelantodolares) + ctarjeta_debito
+                                               Master_Finiciomora - vmr_msaldodolares2
+                                (mactivos_margen * vm_mpagado) - vm_cadelantosefectivo
+  (ctarjeta_master_descuentos + Visa_mfinanciacion_limite) * mcomisiones_mantenimiento
+                      (mautoservicio + mextraccion_autoservicio) * Visa_madelantopesos
+                                           (minversion2 + cseguro_vida) / ccajas_otras
+            (mprestamos_prendarios - Master_delinquency) - mcuenta_debitos_automaticos
+                                                 matm_other + cextraccion_autoservicio
+                                                       vm_msaldodolares + thomebanking
+                        (vm_mpagospesos / Master_Fvencimiento) * cprestamos_prendarios
+                                  (cforex_sell + vm_mlimitecompra) + ccheques_emitidos
+                                             mextraccion_autoservicio / vm_mpagospesos
+                                                        ctarjeta_debito - vm_fechaalta
+                          (vmr_mpagominimo - Master_msaldodolares) / mcomisiones_otras
+       (ctarjeta_master_transacciones - tcallcenter) / ccheques_depositados_rechazados
+                                                Visa_madelantopesos + Visa_Finiciomora
+                                                     mcaja_ahorro_adicional + catm_trx
+                               (tcallcenter + vmr_madelantodolares) * Visa_mpagominimo
+                                 (vmr_madelantodolares + vm_msaldopesos) / cliente_vip
+                         (Visa_fultimo_cierre / Visa_delinquency) / Master_mpagospesos
+                                 (cliente_vip + vm_madelantodolares) - vmr_msaldopesos
+                                    ccheques_depositados_rechazados + Visa_msaldopesos
+              (ctarjeta_debito_transacciones + vm_Fvencimiento) - mcaja_ahorro_dolares
+                                                mv_status07 / cextraccion_autoservicio
+                                 (mrentabilidad - Master_msaldopesos) / catm_trx_other
+                               (ccaja_seguridad - mcaja_ahorro_adicional) - vm_mpagado
+                                            mtarjeta_master_descuentos + Master_status
+                (mprestamos_personales - Visa_cconsumos) + ctarjeta_visa_transacciones
+                              (vm_Finiciomora / vm_madelantodolares) * mactivos_margen
+                        (vmr_msaldototal * Visa_mfinanciacion_limite) - catm_trx_other
+                                 (Visa_fechaalta * Master_mpagado) + vm_madelantopesos
+                      (mtarjeta_master_consumo / mtarjeta_visa_consumo) / cliente_edad
+                                          (cplazo_fijo * vm_mpagospesos) / vm_status01
+                                 (cseguro_vivienda + Visa_mlimitecompra) * vm_status04
+                              (vm_msaldopesos / Visa_fultimo_cierre) / cpagomiscuentas
+                                    (vm_fultimo_cierre * vm_status06) - Visa_fechaalta
+                                                 Master_Fvencimiento + vm_Fvencimiento
+                                                 mpagomiscuentas / vm_madelantodolares
+                  (Visa_cadelantosefectivo * Visa_msaldopesos) - Master_madelantopesos
+                                                vm_status03 * ctrx_quarter_normalizado
+                                  (ccajas_depositos * ccuenta_corriente) + cplazo_fijo
+                                                 tmobile_app + vm_mfinanciacion_limite
+                                             (internet - Visa_fechaalta) + vm_status01
+ (ctarjeta_visa_debitos_automaticos * ccuenta_corriente) / ctarjeta_visa_transacciones
+                               (vmr_mpagospesos - vmr_msaldodolares) - vmr_msaldototal
+                                                          cinversion1 / active_quarter
+                                    cseguro_accidentes_personales / cliente_antiguedad
+     (ctarjeta_debito_transacciones / mpagomiscuentas) - cseguro_accidentes_personales
+                   (cprestamos_personales - mcomisiones) / Master_mfinanciacion_limite
+                                 (ctarjeta_visa - cpagodeservicios) - Visa_delinquency
+                  (Visa_mconsumospesos / mtransferencias_emitidas) / vm_fultimo_cierre
+                          (mtarjeta_visa_descuentos / mcomisiones_otras) * vm_status04
+                                         Master_mconsumospesos + mtarjeta_visa_consumo
+                   (Visa_msaldopesos / Master_mlimitecompra) / vm_mfinanciacion_limite
+                                           (kmes - vmr_mconsumototal) / Visa_fechaalta
+                                                                               formula
+                                                                                <char>
+    impo
+  <char>
+  NA/506
+ 267/506
+ 113/506
+  NA/531
+  NA/531
+   6/531
+  NA/484
+  NA/484
+  96/484
+  NA/375
+  NA/375
+ 238/375
+  NA/464
+  NA/464
+  NA/464
+  NA/430
+ 290/430
+ 210/430
+ 135/512
+  NA/512
+  NA/512
+  NA/404
+  NA/404
+  NA/404
+  NA/529
+ 285/529
+  NA/529
+  67/498
+ 140/498
+  NA/498
+ 297/550
+  NA/550
+  25/550
+  NA/211
+  95/211
+  NA/211
+ 378/532
+  NA/532
+ 290/532
+  NA/246
+  NA/246
+  95/246
+  NA/517
+  NA/517
+ 241/517
+  NA/312
+  NA/312
+ 164/312
+ 127/443
+  NA/443
+  NA/443
+  NA/465
+ 269/465
+  74/465
+  NA/384
+  NA/384
+  NA/384
+ 293/523
+ 171/523
+  76/523
+    impo
+  <char>
